@@ -1,0 +1,40 @@
+{
+  "name": "GooberTide",
+  "globIgnorePaths": ["**/*.md"],
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Shared": {
+        "$path": "src/shared"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "GooberTide": {
+        "$path": "src/server"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "GooberTideClient": {
+          "$path": "src/client"
+        }
+      }
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "StreamingEnabled": false
+      }
+    },
+    "Players": {
+      "$className": "Players",
+      "$properties": {
+        "CharacterAutoLoads": false
+      }
+    }
+  }
+}
