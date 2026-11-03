@@ -1,0 +1,5524 @@
+<roblox version="4">
+  <Item class="Players" referent="0">
+    <Properties>
+      <string name="Name">Players</string>
+      <bool name="CharacterAutoLoads">false</bool>
+    </Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="1">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="2">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Config</string>
+          <string name="Source"><![CDATA[-- GOOBER TIDE - central game configuration.
+-- Everything a designer / marketer would want to tune lives here.
+
+local Config = {}
+
+----------------------------------------------------------------------
+-- Meta
+----------------------------------------------------------------------
+Config.GAME_NAME = "Goober Tide"
+Config.DATA_STORE = "GooberTide_v1"
+Config.LB_CASH_STORE = "GooberTide_LB_Cash_v1"
+Config.LB_STEAL_STORE = "GooberTide_LB_Steals_v1"
+Config.SESSION_LOCK_SECONDS = 120
+Config.AUTOSAVE_SECONDS = 60
+
+-- UserIds allowed to open the Director (content capture) panel in live servers.
+-- In Roblox Studio everybody is a director. Put your own UserId (and your creators') here.
+Config.DIRECTORS = {} :: { number }
+
+----------------------------------------------------------------------
+-- Economy
+----------------------------------------------------------------------
+Config.START_CASH = 300
+Config.BASE_SLOTS = 6
+Config.MAX_SLOTS = 24
+Config.STASH_HOURS = 1 -- how many hours of income a pad can store before it is full
+Config.OFFLINE_RATE = 0.25 -- fraction of income earned while offline
+Config.OFFLINE_MAX_HOURS = 2
+Config.OFFLINE_MAX_HOURS_VIP = 6
+Config.STEAL_HOLD = 2.5 -- seconds of holding E to steal
+Config.CARRY_WALKSPEED = 13
+Config.SLAP_COOLDOWN = 1.2
+Config.SLAP_RANGE = 9
+Config.LOCK_DURATION = 45
+Config.LOCK_DURATION_VIP = 90
+Config.LOCK_COOLDOWN = 60
+Config.DEFEND_REWARD_MINUTES = 3 -- slapping a thief that carries something gives N minutes of income
+
+function Config.rebirthCost(n: number): number
+	return 2500000 * (3 ^ n)
+end
+
+function Config.rebirthMult(n: number): number
+	return 1 + 0.5 * n
+end
+
+function Config.slotUpgradeCost(n: number): number
+	return math.floor(1500 * (3.2 ^ n))
+end
+
+function Config.rebirthStartCash(n: number): number
+	return Config.START_CASH + 500 * n
+end
+
+----------------------------------------------------------------------
+-- Rarities
+----------------------------------------------------------------------
+export type Rarity = { name: string, order: number, color: Color3, weight: number, scale: number }
+
+Config.Rarities = {
+	{ name = "Common", order = 1, color = Color3.fromRGB(200, 200, 208), weight = 55, scale = 1.0 },
+	{ name = "Uncommon", order = 2, color = Color3.fromRGB(92, 214, 110), weight = 25, scale = 1.1 },
+	{ name = "Rare", order = 3, color = Color3.fromRGB(70, 150, 255), weight = 12, scale = 1.25 },
+	{ name = "Epic", order = 4, color = Color3.fromRGB(176, 90, 255), weight = 5, scale = 1.45 },
+	{ name = "Legendary", order = 5, color = Color3.fromRGB(255, 176, 40), weight = 1.8, scale = 1.7 },
+	{ name = "Mythic", order = 6, color = Color3.fromRGB(255, 70, 120), weight = 0.7, scale = 2.0 },
+	{ name = "Secret", order = 7, color = Color3.fromRGB(20, 240, 230), weight = 0.1, scale = 2.5 },
+} :: { Rarity }
+
+Config.Rarity = {} :: { [string]: Rarity }
+for _, r in Config.Rarities do
+	Config.Rarity[r.name] = r
+end
+
+----------------------------------------------------------------------
+-- Mutations
+----------------------------------------------------------------------
+export type Mutation = { name: string, mult: number, color: Color3 }
+
+Config.Mutations = {
+	Normal = { name = "Normal", mult = 1, color = Color3.fromRGB(255, 255, 255) },
+	Gold = { name = "Gold", mult = 1.5, color = Color3.fromRGB(255, 205, 60) },
+	Slimy = { name = "Slimy", mult = 2, color = Color3.fromRGB(110, 255, 90) },
+	Lava = { name = "Lava", mult = 3, color = Color3.fromRGB(255, 110, 30) },
+	Rainbow = { name = "Rainbow", mult = 5, color = Color3.fromRGB(255, 120, 255) },
+	Tidal = { name = "Tidal", mult = 6, color = Color3.fromRGB(70, 200, 255) },
+} :: { [string]: Mutation }
+
+-- chance (in percent) that a belt goober gets a mutation
+Config.MutationRoll = {
+	{ "Gold", 6 },
+	{ "Slimy", 3 },
+	{ "Lava", 1.5 },
+	{ "Rainbow", 0.5 },
+}
+Config.MutationRollSurge = { -- during the Tide Surge after a wave
+	{ "Tidal", 8 },
+	{ "Gold", 6 },
+	{ "Slimy", 3 },
+	{ "Lava", 1.5 },
+	{ "Rainbow", 0.5 },
+}
+
+----------------------------------------------------------------------
+-- Creatures ("Goobers")
+----------------------------------------------------------------------
+export type Creature = {
+	id: string,
+	name: string,
+	rarity: string,
+	price: number,
+	cps: number,
+	color: Color3,
+	scale: number?,
+	features: { string },
+	tideOnly: boolean?,
+	blurb: string,
+}
+
+local function c(id, name, rarity, price, cps, color, features, blurb, extra): Creature
+	local t: any = {
+		id = id,
+		name = name,
+		rarity = rarity,
+		price = price,
+		cps = cps,
+		color = color,
+		features = features,
+		blurb = blurb,
+		scale = 1,
+	}
+	if extra then
+		for k, v in extra do
+			t[k] = v
+		end
+	end
+	return t
+end
+
+local RGB = Color3.fromRGB
+
+Config.Creatures = {
+	-- COMMON
+	c("blorp", "Blorp", "Common", 150, 3, RGB(120, 220, 110), { "cheeks" }, "Mostly goo. Fully vibes."),
+	c("snorbo", "Snorbo", "Common", 250, 5, RGB(255, 150, 190), { "bigteeth" }, "Has never once closed its mouth."),
+	c("wibble", "Wibble", "Common", 400, 8, RGB(120, 200, 255), { "antenna" }, "Receives signals from a taco truck."),
+	c("dorp", "Dorp", "Common", 600, 12, RGB(255, 225, 90), { "sprout" }, "Photosynthesizes out of pure confidence."),
+	-- UNCOMMON
+	c("squidge", "Squidge", "Uncommon", 1500, 25, RGB(170, 120, 255), { "headphones" }, "Only listens to bass-boosted lullabies."),
+	c("noodlr", "Noodlr", "Uncommon", 2500, 40, RGB(255, 170, 80), { "unibrow", "tail" }, "Zero bones. Infinite drama."),
+	c("bonko", "Bonko", "Uncommon", 4000, 65, RGB(60, 200, 180), { "partyhat" }, "Every day is its birthday."),
+	c("mochimop", "Mochi Mop", "Uncommon", 6500, 100, RGB(255, 235, 240), { "cheeks", "sprout" }, "Squishes on command."),
+	-- RARE
+	c("sirwobbles", "Sir Wobbles", "Rare", 15000, 200, RGB(170, 190, 230), { "tophat", "mustache" }, "Sophisticated. Slightly tipsy."),
+	c("captaincrumb", "Captain Crumb", "Rare", 28000, 360, RGB(220, 170, 110), { "bowtie", "mustache" }, "Commands a fleet of one cracker."),
+	c("glitchy", "Glitchy", "Rare", 50000, 620, RGB(60, 255, 200), { "antenna", "spikes" }, "Not a bug. A feature. Probably.", { neon = true }),
+	c("discodave", "Disco Dave", "Rare", 85000, 1000, RGB(255, 80, 200), { "sunglasses", "headphones" }, "The party arrives when he does."),
+	-- EPIC
+	c("toastertom", "Toaster Tom", "Epic", 250000, 2800, RGB(230, 180, 100), { "sunglasses", "spikes" }, "Pops up at the worst times."),
+	c("lordsploot", "Lord Sploot", "Epic", 450000, 4800, RGB(110, 60, 170), { "horns", "mustache" }, "Rules the swamp. Loudly."),
+	c("turbotaco", "Turbo Taco", "Epic", 800000, 8000, RGB(255, 190, 60), { "sunglasses", "tail", "flame" }, "Delivered in 30 seconds or you get a hug."),
+	c("ghostytoast", "Ghosty Toast", "Epic", 1400000, 13000, RGB(240, 240, 255), { "halo", "cheeks" }, "Haunts breakfast tables.", { transparency = 0.25 }),
+	-- LEGENDARY
+	c("kinggigaglorp", "King Gigaglorp", "Legendary", 5000000, 50000, RGB(70, 200, 90), { "crown", "bigteeth", "sparkles" }, "Ruler of the Slime Throne."),
+	c("sushisamurai", "Sushi Samurai", "Legendary", 12000000, 110000, RGB(240, 80, 70), { "horns", "bowtie" }, "Slices the competition. And the rice."),
+	c("magmamuffin", "Magma Muffin", "Legendary", 30000000, 260000, RGB(200, 60, 30), { "flame", "spikes" }, "Fresh from the volcano bakery.", { neon = true }),
+	-- MYTHIC
+	c("cosmiccheeseborger", "Cosmic Cheeseborger", "Mythic", 150000000, 1100000, RGB(255, 215, 60), { "crown", "wings", "sparkles" }, "Born when a burger fell into a black hole."),
+	c("voidwaffle", "Void Waffle", "Mythic", 400000000, 2800000, RGB(55, 25, 95), { "horns", "wings", "sparkles" }, "Syrup of the abyss."),
+	c("prismaticpickle", "Prismatic Pickle", "Mythic", 1000000000, 6500000, RGB(120, 255, 120), { "halo", "wings", "sparkles", "sunglasses" }, "Too cool to be brined."),
+	-- SECRET
+	c("thegoober", "THE GOOBER", "Secret", 25000000000, 120000000, RGB(255, 255, 255), { "halo", "crown", "wings", "sparkles", "flame" }, "Nobody believed it existed.", { rainbow = true, scale = 1.1 }),
+	c("tsunamoo", "Tsunamoo", "Secret", 100000000000, 450000000, RGB(30, 110, 255), { "crown", "wings", "sparkles" }, "Surfs in on the biggest wave. Only the Tide brings it.", { tideOnly = true, scale = 1.1 }),
+}
+
+Config.CreatureById = {} :: { [string]: Creature }
+for _, d in Config.Creatures do
+	Config.CreatureById[d.id] = d
+end
+
+function Config.priceOf(def: Creature, mutName: string?): number
+	local m = Config.Mutations[mutName or "Normal"] or Config.Mutations.Normal
+	return math.floor(def.price * (0.4 + 0.6 * m.mult))
+end
+
+function Config.cpsOf(def: Creature, mutName: string?): number
+	local m = Config.Mutations[mutName or "Normal"] or Config.Mutations.Normal
+	return def.cps * m.mult
+end
+
+----------------------------------------------------------------------
+-- Map
+----------------------------------------------------------------------
+Config.MAP = {
+	PLOTS_PER_SIDE = 6,
+	PLOT_SPACING = 52,
+	PLOT_X = 126, -- absolute X of plot centre
+	PLATFORM = Vector3.new(72, 20, 48),
+	RAMP_RUN = 44,
+	RAMP_WIDTH = 14,
+	BELT_HALF_LENGTH = 160,
+	BELT_Y = 1,
+	WORLD_HALF = 300,
+}
+Config.MAX_PLAYERS = Config.MAP.PLOTS_PER_SIDE * 2
+
+----------------------------------------------------------------------
+-- Belt
+----------------------------------------------------------------------
+Config.BELT = {
+	SPEED = 7, -- studs / second
+	SPAWN_EVERY = 2.6,
+	SPAWN_EVERY_SURGE = 1.4,
+	MAX_ITEMS = 26,
+	BUY_HOLD = 0.3,
+}
+
+----------------------------------------------------------------------
+-- Tide
+----------------------------------------------------------------------
+Config.TIDE = {
+	INTERVAL = 180, -- seconds between waves (first wave comes after INTERVAL_FIRST)
+	INTERVAL_FIRST = 75,
+	INTERVAL_STUDIO = 30,
+	WARNING = 15,
+	WAVE_SPEED = 42, -- studs / second
+	WAVE_HEIGHT = 24,
+	WAVE_THICKNESS = 26,
+	WAVE_HALF_WIDTH = 150,
+	SAFE_Y = 13, -- standing above this height = safe (plot platforms are at y=20)
+	SURGE_SECONDS = 60,
+	SURGE_LUCK = 2,
+	SURGE_INCOME_MULT = 2,
+	BEACH_GOOBERS = 14,
+	BEACH_LIFETIME = 50,
+	TSUNAMOO_CHANCE = 0.04, -- per tide, a Tsunamoo is washed ashore
+	SURVIVOR_BONUS_MINUTES = 2,
+}
+
+----------------------------------------------------------------------
+-- Gamepasses / Developer products  (REPLACE the 0 ids with yours - see docs/05_LAUNCH_CHECKLIST.md)
+----------------------------------------------------------------------
+Config.PASSES = {
+	Cash2x = { id = 0, name = "2x Cash", desc = "Double ALL income. Forever.", robux = 399, order = 1 },
+	AutoCollect = { id = 0, name = "Auto Collect", desc = "Cash goes straight to your wallet. No pad touching!", robux = 249, order = 2 },
+	VIP = { id = 0, name = "VIP", desc = "+25% cash, 90s base lock, 6h offline earnings, VIP tag.", robux = 499, order = 3 },
+	Luck = { id = 0, name = "Lucky Charm", desc = "2x luck on your Spins, Daily goobers and Beach grabs.", robux = 199, order = 4 },
+	Slots4 = { id = 0, name = "+4 Slots", desc = "Four extra goober slots right away.", robux = 299, order = 5 },
+}
+
+Config.PRODUCTS = {
+	Cash10m = { id = 0, name = "10 Min of Cash", desc = "Instantly get 10 minutes of your income.", robux = 49, order = 1 },
+	Cash1h = { id = 0, name = "1 Hour of Cash", desc = "Instantly get 1 hour of your income.", robux = 149, order = 2 },
+	Cash6h = { id = 0, name = "6 Hours of Cash", desc = "Instantly get 6 hours of your income.", robux = 499, order = 3 },
+	Luck = { id = 0, name = "Server Luck x2 (10m)", desc = "Boost rarity luck for EVERYONE on the server!", robux = 99, order = 4 },
+	MegaLuck = { id = 0, name = "Server Luck x4 (5m)", desc = "MEGA luck for the whole server. You're the hero.", robux = 199, order = 5 },
+	Shield = { id = 0, name = "Tide Shield x3", desc = "Survive the next 3 waves that sweep you away.", robux = 79, order = 6 },
+	LockRefill = { id = 0, name = "Instant Base Lock", desc = "Lock your base NOW (no cooldown).", robux = 39, order = 7 },
+	MythicDrop = { id = 0, name = "Summon a Mythic", desc = "A MYTHIC rolls onto the belt, reserved for you for 25s.", robux = 399, order = 8 },
+}
+
+----------------------------------------------------------------------
+-- Rewards
+----------------------------------------------------------------------
+-- type: cash (minutes of income, min floor), luck (server luck minutes), shield, goober (min rarity order), lock
+Config.DAILY = {
+	{ kind = "cash", minutes = 5, floor = 2500, label = "Cash Drop" },
+	{ kind = "luck", minutes = 5, label = "Server Luck x2 (5m)" },
+	{ kind = "cash", minutes = 15, floor = 15000, label = "Big Cash Drop" },
+	{ kind = "shield", amount = 1, label = "Tide Shield" },
+	{ kind = "cash", minutes = 45, floor = 100000, label = "Mega Cash Drop" },
+	{ kind = "luck", minutes = 15, label = "Server Luck x2 (15m)" },
+	{ kind = "goober", minOrder = 3, label = "Free Rare+ Goober!" },
+}
+
+Config.SPIN_COOLDOWN = 4 * 3600
+Config.SPIN = {
+	{ kind = "cash", minutes = 3, floor = 1000, weight = 28, label = "Cash" },
+	{ kind = "cash", minutes = 10, floor = 5000, weight = 20, label = "More Cash" },
+	{ kind = "luck", minutes = 5, weight = 14, label = "Luck x2 (5m)" },
+	{ kind = "shield", amount = 1, weight = 12, label = "Tide Shield" },
+	{ kind = "goober", minOrder = 1, maxOrder = 2, weight = 12, label = "Goober!" },
+	{ kind = "cash", minutes = 30, floor = 25000, weight = 8, label = "Cash Jackpot" },
+	{ kind = "goober", minOrder = 3, maxOrder = 4, weight = 5, label = "Rare Goober!" },
+	{ kind = "goober", minOrder = 5, maxOrder = 5, weight = 1, label = "LEGENDARY!" },
+}
+
+-- seconds of play time -> reward
+Config.GIFTS = {
+	{ at = 120, kind = "cash", minutes = 2, floor = 1000 },
+	{ at = 300, kind = "cash", minutes = 4, floor = 3000 },
+	{ at = 600, kind = "shield", amount = 1 },
+	{ at = 900, kind = "cash", minutes = 8, floor = 8000 },
+	{ at = 1200, kind = "luck", minutes = 5 },
+	{ at = 1800, kind = "cash", minutes = 15, floor = 20000 },
+	{ at = 2400, kind = "shield", amount = 1 },
+	{ at = 3000, kind = "cash", minutes = 25, floor = 50000 },
+	{ at = 3600, kind = "luck", minutes = 10 },
+	{ at = 4500, kind = "cash", minutes = 40, floor = 100000 },
+	{ at = 5400, kind = "goober", minOrder = 3 },
+	{ at = 7200, kind = "cash", minutes = 90, floor = 250000 },
+}
+
+Config.CODES = {
+	LAUNCH = { kind = "cash", minutes = 10, floor = 25000 },
+	TIDE = { kind = "luck", minutes = 10 },
+	SPLASH = { kind = "shield", amount = 2 },
+	GOOBER = { kind = "cash", minutes = 5, floor = 10000 },
+	STEALIT = { kind = "cash", minutes = 8, floor = 50000 },
+	HIGGS = { kind = "goober", minOrder = 2 },
+	SQUAD = { kind = "cash", minutes = 15, floor = 75000 },
+}
+
+----------------------------------------------------------------------
+-- Sound hooks. rbxasset:// sounds ship with the Roblox client. Swap for your own SFX ids.
+----------------------------------------------------------------------
+Config.SOUNDS = {
+	buy = "rbxasset://sounds/electronicpingshort.wav",
+	collect = "rbxasset://sounds/button.wav",
+	reveal = "rbxasset://sounds/victory.wav",
+	alarm = "rbxasset://sounds/bass.wav",
+	slap = "rbxasset://sounds/impact_water.mp3",
+	siren = "rbxasset://sounds/bass.wav",
+	swoosh = "rbxasset://sounds/swoosh.wav",
+	click = "rbxasset://sounds/clickfast.wav",
+}
+
+return Config
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
+        <Properties>
+          <string name="Name">GooberFactory</string>
+          <string name="Source"><![CDATA[-- Builds a Goober model completely out of primitive Parts (no marketplace assets needed).
+-- Used by the server for belt / plot goobers and by the client for index previews.
+--
+-- The returned Model has:
+--   PrimaryPart = "Body" (anchored; all other parts are welded to it, unanchored + massless)
+--   Attribute "GroundOffset" = distance from body centre to the bottom of the feet
+--   Attribute "Height"        = approximate total height (used for name tag placement)
+
+local CollectionService = game:GetService("CollectionService")
+local Config = require(script.Parent.Config)
+
+local Factory = {}
+
+local function newPart(parent: Instance, props: { [string]: any }): Part
+	local p = Instance.new("Part")
+	p.Anchored = false
+	p.CanCollide = false
+	p.CanTouch = false
+	p.CanQuery = false
+	p.Massless = true
+	p.CastShadow = false
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Material = Enum.Material.SmoothPlastic
+	for k, v in props do
+		(p :: any)[k] = v
+	end
+	p.Parent = parent
+	return p
+end
+
+local function attach(root: BasePart, part: BasePart, offset: CFrame)
+	part.CFrame = root.CFrame * offset
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = root
+	w.Part1 = part
+	w.Parent = part
+end
+
+type Adder = (shape: Enum.PartType, size: Vector3, offset: CFrame, color: Color3, material: Enum.Material?, transparency: number?) -> Part
+
+-- Feature builders. s = overall scale. Each uses add(shape, size, offset, color, material, transparency)
+local FEATURES: { [string]: (add: Adder, s: number, body: Part) -> () } = {
+	cheeks = function(add, s)
+		for _, sx in { -1, 1 } do
+			add(Enum.PartType.Ball, Vector3.new(0.5, 0.5, 0.25) * s, CFrame.new(sx * 1.0 * s, -0.25 * s, -1.2 * s), Color3.fromRGB(255, 110, 150))
+		end
+	end,
+	bigteeth = function(add, s)
+		for _, sx in { -0.17, 0.17 } do
+			add(Enum.PartType.Block, Vector3.new(0.3, 0.4, 0.12) * s, CFrame.new(sx * s, -0.62 * s, -1.38 * s), Color3.new(1, 1, 1))
+		end
+	end,
+	antenna = function(add, s)
+		add(Enum.PartType.Cylinder, Vector3.new(1.3, 0.12, 0.12) * s, CFrame.new(0, 1.9 * s, 0) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(60, 60, 70))
+		add(Enum.PartType.Ball, Vector3.new(0.5, 0.5, 0.5) * s, CFrame.new(0, 2.6 * s, 0), Color3.fromRGB(255, 80, 120), Enum.Material.Neon)
+	end,
+	sprout = function(add, s)
+		add(Enum.PartType.Cylinder, Vector3.new(0.8, 0.12, 0.12) * s, CFrame.new(0, 1.8 * s, 0) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(70, 160, 60))
+		for _, sx in { -1, 1 } do
+			add(Enum.PartType.Ball, Vector3.new(0.8, 0.12, 0.45) * s, CFrame.new(sx * 0.4 * s, 2.25 * s, 0) * CFrame.Angles(0, 0, sx * math.rad(-20)), Color3.fromRGB(90, 200, 80))
+		end
+	end,
+	headphones = function(add, s)
+		for _, sx in { -1, 1 } do
+			add(Enum.PartType.Cylinder, Vector3.new(0.5, 1.0, 1.0) * s, CFrame.new(sx * 1.5 * s, 0.1 * s, 0), Color3.fromRGB(35, 35, 45))
+		end
+		add(Enum.PartType.Block, Vector3.new(3.2, 0.18, 0.35) * s, CFrame.new(0, 1.42 * s, 0), Color3.fromRGB(35, 35, 45))
+	end,
+	unibrow = function(add, s)
+		add(Enum.PartType.Block, Vector3.new(1.5, 0.22, 0.12) * s, CFrame.new(0, 0.85 * s, -1.3 * s) * CFrame.Angles(math.rad(-10), 0, 0), Color3.fromRGB(50, 35, 30))
+	end,
+	tail = function(add, s)
+		for i = 1, 3 do
+			add(Enum.PartType.Ball, Vector3.one * (0.7 - i * 0.12) * s, CFrame.new(0, (-0.6 + i * 0.22) * s, (1.4 + i * 0.5) * s), Color3.fromRGB(255, 255, 255))
+		end
+	end,
+	partyhat = function(add, s)
+		local cols = { Color3.fromRGB(255, 80, 150), Color3.fromRGB(255, 230, 70), Color3.fromRGB(80, 200, 255) }
+		for i = 1, 3 do
+			local w = (1.3 - (i - 1) * 0.4) * s
+			add(Enum.PartType.Cylinder, Vector3.new(0.5 * s, w, w), CFrame.new(0, (1.55 + (i - 1) * 0.45) * s, 0) * CFrame.Angles(0, 0, math.rad(90)), cols[i])
+		end
+	end,
+	tophat = function(add, s)
+		add(Enum.PartType.Cylinder, Vector3.new(0.18, 2.4, 2.4) * s, CFrame.new(0, 1.45 * s, 0) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(25, 25, 30))
+		add(Enum.PartType.Cylinder, Vector3.new(1.3, 1.5, 1.5) * s, CFrame.new(0, 2.1 * s, 0) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(25, 25, 30))
+		add(Enum.PartType.Cylinder, Vector3.new(0.3, 1.55, 1.55) * s, CFrame.new(0, 1.7 * s, 0) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(200, 40, 50))
+	end,
+	mustache = function(add, s)
+		for _, sx in { -1, 1 } do
+			add(Enum.PartType.Block, Vector3.new(0.75, 0.2, 0.18) * s, CFrame.new(sx * 0.38 * s, -0.22 * s, -1.45 * s) * CFrame.Angles(0, 0, sx * math.rad(12)), Color3.fromRGB(70, 45, 30))
+		end
+	end,
+	bowtie = function(add, s)
+		for _, sx in { -1, 1 } do
+			add(Enum.PartType.Block, Vector3.new(0.55, 0.45, 0.2) * s, CFrame.new(sx * 0.33 * s, -1.0 * s, -1.1 * s) * CFrame.Angles(0, sx * math.rad(-20), sx * math.rad(15)), Color3.fromRGB(230, 50, 70))
+		end
+		add(Enum.PartType.Ball, Vector3.new(0.3, 0.3, 0.3) * s, CFrame.new(0, -1.0 * s, -1.2 * s), Color3.fromRGB(180, 30, 50))
+	end,
+	spikes = function(add, s)
+		for i = 0, 4 do
+			local a = (i / 5) * math.pi * 2
+			local ox, oz = math.cos(a) * 0.8, math.sin(a) * 0.8
+			add(
+				Enum.PartType.Block,
+				Vector3.new(0.35, 0.9, 0.35) * s,
+				CFrame.new(ox * s, 1.35 * s, oz * s) * CFrame.Angles(math.rad(oz * 25), 0, math.rad(-ox * 25)),
+				Color3.fromRGB(255, 240, 200)
+			)
+		end
+	end,
+	horns = function(add, s)
+		for _, sx in { -1, 1 } do
+			add(
+				Enum.PartType.Cylinder,
+				Vector3.new(1.5, 0.5, 0.5) * s,
+				CFrame.new(sx * 0.95 * s, 1.35 * s, 0) * CFrame.Angles(0, 0, math.rad(90 - sx * 28)),
+				Color3.fromRGB(250, 240, 220)
+			)
+		end
+	end,
+	crown = function(add, s)
+		add(Enum.PartType.Cylinder, Vector3.new(0.55, 1.7, 1.7) * s, CFrame.new(0, 1.65 * s, 0) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(255, 205, 50), Enum.Material.Neon)
+		for i = 0, 4 do
+			local a = (i / 5) * math.pi * 2
+			add(Enum.PartType.Block, Vector3.new(0.3, 0.55, 0.3) * s, CFrame.new(math.cos(a) * 0.7 * s, 2.15 * s, math.sin(a) * 0.7 * s), Color3.fromRGB(255, 205, 50), Enum.Material.Neon)
+		end
+		add(Enum.PartType.Ball, Vector3.new(0.35, 0.35, 0.35) * s, CFrame.new(0, 1.7 * s, -0.85 * s), Color3.fromRGB(255, 60, 90), Enum.Material.Neon)
+	end,
+	halo = function(add, s)
+		add(Enum.PartType.Cylinder, Vector3.new(0.12, 2.1, 2.1) * s, CFrame.new(0, 2.35 * s, 0) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(255, 240, 120), Enum.Material.Neon, 0.25)
+	end,
+	wings = function(add, s)
+		for _, sx in { -1, 1 } do
+			add(Enum.PartType.Block, Vector3.new(2.2, 0.18, 1.5) * s, CFrame.new(sx * 1.9 * s, 0.6 * s, 1.1 * s) * CFrame.Angles(math.rad(10), sx * math.rad(-25), sx * math.rad(20)), Color3.fromRGB(255, 255, 255), Enum.Material.Neon, 0.15)
+		end
+	end,
+	sunglasses = function(add, s)
+		add(Enum.PartType.Block, Vector3.new(2.3, 0.5, 0.18) * s, CFrame.new(0, 0.33 * s, -1.62 * s), Color3.fromRGB(10, 10, 14))
+		add(Enum.PartType.Block, Vector3.new(0.3, 0.12, 0.12) * s, CFrame.new(0, 0.4 * s, -1.66 * s), Color3.fromRGB(10, 10, 14))
+	end,
+	flame = function(_add, _s, body)
+		local f = Instance.new("Fire")
+		f.Heat = 8
+		f.Size = 6
+		f.Parent = body
+	end,
+	sparkles = function(_add, _s, body)
+		local sp = Instance.new("Sparkles")
+		sp.Parent = body
+	end,
+}
+
+local function applyMutation(model: Model, body: Part, mutName: string, def: any)
+	if mutName == "Normal" then
+		return
+	end
+	local mut = Config.Mutations[mutName]
+	if not mut then
+		return
+	end
+	model:SetAttribute("Mutation", mutName)
+	if mutName == "Gold" then
+		body.Color = Color3.fromRGB(255, 200, 40)
+		body.Material = Enum.Material.Metal
+		local sp = Instance.new("Sparkles")
+		sp.SparkleColor = Color3.fromRGB(255, 220, 90)
+		sp.Parent = body
+	elseif mutName == "Slimy" then
+		body.Color = Color3.fromRGB(80, 255, 70)
+		body.Material = Enum.Material.Glass
+		body.Transparency = 0.2
+	elseif mutName == "Lava" then
+		body.Color = Color3.fromRGB(255, 90, 20)
+		body.Material = Enum.Material.Neon
+		local f = Instance.new("Fire")
+		f.Heat = 10
+		f.Size = 8
+		f.Color = Color3.fromRGB(255, 120, 30)
+		f.SecondaryColor = Color3.fromRGB(180, 20, 0)
+		f.Parent = body
+	elseif mutName == "Rainbow" then
+		body.Material = Enum.Material.Neon
+		model:SetAttribute("Rainbow", true)
+		local p = Instance.new("ParticleEmitter")
+		p.Rate = 14
+		p.Lifetime = NumberRange.new(0.8, 1.4)
+		p.Speed = NumberRange.new(1, 3)
+		p.Size = NumberSequence.new(0.5, 0)
+		p.LightEmission = 1
+		p.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 80, 80)),
+			ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 240, 80)),
+			ColorSequenceKeypoint.new(0.66, Color3.fromRGB(80, 255, 140)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 120, 255)),
+		})
+		p.Parent = body
+	elseif mutName == "Tidal" then
+		body.Color = Color3.fromRGB(60, 170, 255)
+		body.Material = Enum.Material.Glass
+		body.Transparency = 0.15
+		local p = Instance.new("ParticleEmitter")
+		p.Rate = 18
+		p.Lifetime = NumberRange.new(0.6, 1.1)
+		p.Speed = NumberRange.new(2, 5)
+		p.SpreadAngle = Vector2.new(60, 60)
+		p.Acceleration = Vector3.new(0, -12, 0)
+		p.Size = NumberSequence.new(0.35, 0)
+		p.LightEmission = 0.6
+		p.Color = ColorSequence.new(Color3.fromRGB(120, 210, 255))
+		p.Parent = body
+	end
+end
+
+function Factory.build(def: any, mutName: string?): Model
+	mutName = mutName or "Normal"
+	local rar = Config.Rarity[def.rarity]
+	local s: number = (def.scale or 1) * rar.scale
+
+	local model = Instance.new("Model")
+	model.Name = def.name
+	model:SetAttribute("DefId", def.id)
+	model:SetAttribute("Rarity", def.rarity)
+	model:SetAttribute("Scale", s)
+
+	local body = newPart(model, {
+		Name = "Body",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(3, 3, 3) * s,
+		Color = def.color,
+		Anchored = true,
+		CanQuery = true,
+		Material = if def.neon then Enum.Material.Neon else Enum.Material.SmoothPlastic,
+		Transparency = def.transparency or 0,
+	})
+	body.CFrame = CFrame.new(0, 0, 0)
+	model.PrimaryPart = body
+
+	local function add(shape, size, offset, color, material, transparency)
+		local p = newPart(model, {
+			Shape = shape,
+			Size = size,
+			Color = color,
+			Material = material or Enum.Material.SmoothPlastic,
+			Transparency = transparency or 0,
+		})
+		attach(body, p, offset)
+		return p
+	end
+
+	-- feet
+	for _, sx in { -0.75, 0.75 } do
+		add(Enum.PartType.Ball, Vector3.new(0.95, 0.7, 1.15) * s, CFrame.new(sx * s, -1.38 * s, -0.15 * s), def.color:Lerp(Color3.new(0, 0, 0), 0.25))
+	end
+	-- eyes (slightly cross-eyed = funnier)
+	for _, sx in { -1, 1 } do
+		add(Enum.PartType.Ball, Vector3.new(0.9, 0.9, 0.9) * s, CFrame.new(sx * 0.55 * s, 0.4 * s, -1.28 * s), Color3.new(1, 1, 1))
+		add(Enum.PartType.Ball, Vector3.new(0.42, 0.42, 0.42) * s, CFrame.new(sx * 0.46 * s, 0.38 * s, -1.68 * s), Color3.new(0, 0, 0))
+	end
+	-- mouth
+	add(Enum.PartType.Block, Vector3.new(0.75, 0.16, 0.1) * s, CFrame.new(0, -0.38 * s, -1.44 * s), Color3.fromRGB(40, 20, 25))
+
+	for _, f in def.features do
+		local fn = FEATURES[f]
+		if fn then
+			fn(add, s, body)
+		end
+	end
+
+	if def.rainbow then
+		model:SetAttribute("Rainbow", true)
+	end
+	if def.rarity == "Secret" or def.rarity == "Mythic" then
+		local glow = Instance.new("PointLight")
+		glow.Color = rar.color
+		glow.Range = 14
+		glow.Brightness = 1.5
+		glow.Parent = body
+	end
+
+	applyMutation(model, body, mutName, def)
+
+	if model:GetAttribute("Rainbow") then
+		CollectionService:AddTag(model, "RainbowGoober")
+	end
+	model:SetAttribute("GroundOffset", 1.75 * s)
+	model:SetAttribute("Height", 3.4 * s)
+	return model
+end
+
+-- Lets a carried / stolen copy follow a character instead of being anchored.
+function Factory.makeLoose(model: Model)
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = false
+			d.CanCollide = false
+			d.Massless = true
+		end
+	end
+end
+
+return Factory
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="5">
+        <Properties>
+          <string name="Name">Net</string>
+          <string name="Source"><![CDATA[-- Remote event registry. The server creates every event up front (Net.init),
+-- the client simply waits for them.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Net = {}
+
+Net.EVENTS = {
+	-- server -> client
+	"Data", -- full snapshot of the local player's state
+	"Notify", -- (text, kind)
+	"Announce", -- (text, color) server-wide headline
+	"Reveal", -- big rarity reveal popup
+	"StealAlert", -- someone is stealing from you
+	"TideState", -- (state, endsAt, extra)
+	"SpinResult", -- (index)
+	"Shake", -- (intensity, duration)
+	"Sfx", -- (soundKey)
+	"Knock", -- (velocity: Vector3) apply a shove to the local character
+	-- client -> server
+	"Rebirth",
+	"ClaimDaily",
+	"DoSpin",
+	"ClaimGift", -- (index)
+	"Redeem", -- (code)
+	"UseLock",
+	"CollectAll",
+	"UpgradeSlot",
+	"Director", -- (command, arg)
+}
+
+local FOLDER_NAME = "GooberRemotes"
+
+function Net.init()
+	assert(RunService:IsServer(), "Net.init is server-only")
+	local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME)
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = FOLDER_NAME
+		folder.Parent = ReplicatedStorage
+	end
+	for _, name in Net.EVENTS do
+		if not folder:FindFirstChild(name) then
+			local r = Instance.new("RemoteEvent")
+			r.Name = name
+			r.Parent = folder
+		end
+	end
+end
+
+function Net.get(name: string): RemoteEvent
+	local folder = if RunService:IsServer()
+		then ReplicatedStorage:FindFirstChild(FOLDER_NAME)
+		else ReplicatedStorage:WaitForChild(FOLDER_NAME)
+	assert(folder, "Net.init() has not run")
+	return (folder :: Instance):WaitForChild(name) :: RemoteEvent
+end
+
+return Net
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="6">
+        <Properties>
+          <string name="Name">Util</string>
+          <string name="Source"><![CDATA[-- Small pure helpers shared by client and server.
+
+local Util = {}
+
+local SUFFIX = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc" }
+
+function Util.formatNumber(n: number): string
+	if n ~= n or n == math.huge then
+		return "0"
+	end
+	if n < 1000 then
+		return tostring(math.floor(n))
+	end
+	local idx = math.min(math.floor(math.log10(n) / 3), #SUFFIX - 1)
+	local v = n / (10 ^ (idx * 3))
+	local s
+	if v < 10 then
+		s = string.format("%.2f", v)
+	elseif v < 100 then
+		s = string.format("%.1f", v)
+	else
+		s = string.format("%.0f", v)
+	end
+	if string.find(s, "%.") then
+		s = string.gsub(s, "0+$", "")
+		s = string.gsub(s, "%.$", "")
+	end
+	return s .. SUFFIX[idx + 1]
+end
+
+function Util.money(n: number): string
+	return "$" .. Util.formatNumber(n)
+end
+
+function Util.formatTime(seconds: number): string
+	seconds = math.max(0, math.ceil(seconds))
+	local h = seconds // 3600
+	local m = (seconds % 3600) // 60
+	local s = seconds % 60
+	if h > 0 then
+		return string.format("%d:%02d:%02d", h, m, s)
+	end
+	return string.format("%d:%02d", m, s)
+end
+
+function Util.deepCopy(t: any): any
+	if type(t) ~= "table" then
+		return t
+	end
+	local out = {}
+	for k, v in t do
+		out[k] = Util.deepCopy(v)
+	end
+	return out
+end
+
+-- items: array, weightFn(item) -> number. Returns the picked item (or nil if all weights are 0).
+function Util.weightedPick(items: { any }, weightFn: (any) -> number, rng: Random?)
+	local total = 0
+	for _, it in items do
+		total += math.max(0, weightFn(it))
+	end
+	if total <= 0 then
+		return nil
+	end
+	local roll = (rng and rng:NextNumber() or math.random()) * total
+	for _, it in items do
+		roll -= math.max(0, weightFn(it))
+		if roll <= 0 then
+			return it
+		end
+	end
+	return items[#items]
+end
+
+function Util.clamp(n: number, lo: number, hi: number): number
+	return math.max(lo, math.min(hi, n))
+end
+
+return Util
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="7">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Folder" referent="8">
+      <Properties>
+        <string name="Name">GooberTide</string>
+      </Properties>
+      <Item class="Script" referent="9">
+        <Properties>
+          <string name="Name">Main</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[-- GOOBER TIDE - server bootstrap.
+-- Loads every service in dependency order, then wires the player lifecycle.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Net = require(Shared.Net)
+
+Net.init()
+Players.CharacterAutoLoads = false
+
+local servicesFolder = script.Parent:WaitForChild("Services")
+
+local ORDER = {
+	"State",
+	"Analytics",
+	"Data",
+	"Economy",
+	"Map",
+	"Leaderboard",
+	"Plot",
+	"Tide",
+	"Belt",
+	"Steal",
+	"Slap",
+	"Rewards",
+	"Monetization",
+	"Director",
+}
+
+local S: any = {}
+for _, name in ORDER do
+	S[name] = require(servicesFolder[name])
+end
+for _, name in ORDER do
+	local svc = S[name]
+	if type(svc.Init) == "function" then
+		svc.Init(S)
+	end
+end
+
+local State = S.State
+
+----------------------------------------------------------------------
+-- Character handling
+----------------------------------------------------------------------
+local function onCharacter(player: Player, char: Model)
+	local ps = State.get(player)
+	local hum = char:WaitForChild("Humanoid", 10) :: Humanoid?
+	if not hum then
+		return
+	end
+	hum.Died:Connect(function()
+		local current = State.get(player)
+		if current then
+			S.Steal.OnDied(current)
+		end
+		task.wait(Players.RespawnTime)
+		if player.Parent and State.get(player) then
+			player:LoadCharacter()
+		end
+	end)
+	if ps then
+		S.Slap.Give(player)
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	player.CharacterAdded:Connect(function(char)
+		onCharacter(player, char)
+	end)
+
+	local ps = S.Data.LoadPlayer(player)
+	if not ps then
+		player:Kick("Could not load your save data. Please rejoin - your progress is safe!")
+		return
+	end
+	if not player.Parent then
+		S.Data.SaveAndRelease(ps)
+		return
+	end
+
+	S.Monetization.LoadPasses(ps)
+	if not S.Plot.Assign(ps) then
+		player:Kick("This server is full of goobers! Please join another server.")
+		State.byPlayer[player] = nil
+		return
+	end
+	S.Analytics.step(player, 1, "Joined")
+	S.Economy.OfflineEarnings(ps)
+	S.Plot.RebuildAll(ps)
+	S.Data.Push(ps)
+	S.Tide.SendTo(player)
+	player:LoadCharacter()
+end
+
+local function onPlayerRemoving(player: Player)
+	local ps = State.get(player)
+	if not ps then
+		return
+	end
+	S.Steal.OnLeaving(ps)
+	S.Plot.Release(ps)
+	S.Data.SaveAndRelease(ps)
+end
+
+Players.PlayerAdded:Connect(function(player)
+	task.spawn(onPlayerAdded, player)
+end)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+for _, player in Players:GetPlayers() do
+	task.spawn(onPlayerAdded, player)
+end
+
+game:BindToClose(function()
+	S.Data.SaveAllOnClose()
+end)
+
+print(string.format("[%s] server ready", Config.GAME_NAME))
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="10">
+        <Properties>
+          <string name="Name">Services</string>
+        </Properties>
+        <Item class="ModuleScript" referent="11">
+          <Properties>
+            <string name="Name">Analytics</string>
+            <string name="Source"><![CDATA[-- Thin, failure-proof wrapper around AnalyticsService funnel events (FTUE tracking).
+
+local AnalyticsService = game:GetService("AnalyticsService")
+
+local Analytics = {}
+
+function Analytics.Init(_services: any) end
+
+-- step: 1 joined, 2 first buy, 3 first collect, 4 first steal attempt, 5 first rebirth
+function Analytics.step(player: Player, step: number, name: string)
+	pcall(function()
+		AnalyticsService:LogOnboardingFunnelStepEvent(player, step, name)
+	end)
+end
+
+function Analytics.custom(player: Player, name: string, value: number?)
+	pcall(function()
+		AnalyticsService:LogCustomEvent(player, name, value or 1)
+	end)
+end
+
+return Analytics
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
+            <string name="Name">Belt</string>
+            <string name="Source"><![CDATA[-- The Goober Belt: a shared conveyor in the plaza that rolls random goobers past the players.
+-- Hold E next to a goober to buy it with cash; it flies into your next free slot.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local Factory = require(Shared.GooberFactory)
+local State = require(script.Parent.State)
+local Tags = require(script.Parent.Tags)
+
+local Belt = {}
+local S: any
+local items: { [Model]: any } = {}
+local itemCount = 0
+local beltFolder: Folder
+local forceNext: { any } = {} -- queue of {def, mut, reservedFor}
+
+----------------------------------------------------------------------
+-- Rolling
+----------------------------------------------------------------------
+-- luck multiplies the weight of Rare+ rarities. min/max order restrict the rarity band.
+function Belt.rollDef(luck: number?, minOrder: number?, maxOrder: number?, allowTideOnly: boolean?)
+	luck = luck or 1
+	local pool = {}
+	for _, r in Config.Rarities do
+		if (not minOrder or r.order >= minOrder) and (not maxOrder or r.order <= maxOrder) then
+			table.insert(pool, r)
+		end
+	end
+	local rar = Util.weightedPick(pool, function(r)
+		return r.weight * (if r.order >= 3 then luck else 1)
+	end)
+	if not rar then
+		return nil
+	end
+	local defs = {}
+	for _, d in Config.Creatures do
+		if d.rarity == rar.name and (allowTideOnly or not d.tideOnly) then
+			table.insert(defs, d)
+		end
+	end
+	if #defs == 0 then
+		return nil
+	end
+	return defs[math.random(1, #defs)]
+end
+
+function Belt.rollMutation(surge: boolean?): string
+	local table_ = if surge then Config.MutationRollSurge else Config.MutationRoll
+	local roll = math.random() * 100
+	for _, row in table_ do
+		roll -= row[2]
+		if roll <= 0 then
+			return row[1]
+		end
+	end
+	return "Normal"
+end
+
+----------------------------------------------------------------------
+-- Effects
+----------------------------------------------------------------------
+function Belt.Poof(position: Vector3, color: Color3, amount: number?)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.Transparency = 1
+	p.Size = Vector3.one
+	p.Position = position
+	local e = Instance.new("ParticleEmitter")
+	e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	e.Color = ColorSequence.new(color)
+	e.Lifetime = NumberRange.new(0.5, 1)
+	e.Speed = NumberRange.new(14, 26)
+	e.SpreadAngle = Vector2.new(180, 180)
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.6), NumberSequenceKeypoint.new(1, 0) })
+	e.LightEmission = 1
+	e.Rate = 0
+	e.Parent = p
+	p.Parent = workspace
+	e:Emit(amount or 28)
+	Debris:AddItem(p, 1.5)
+end
+
+----------------------------------------------------------------------
+-- Spawning
+----------------------------------------------------------------------
+function Belt.Spawn(def: any?, mut: string?, reservedFor: number?)
+	local surge = S.Tide.isSurge()
+	def = def or Belt.rollDef(State.currentLuck())
+	if not def then
+		return
+	end
+	mut = mut or Belt.rollMutation(surge)
+
+	local model = Factory.build(def, mut)
+	local off = model:GetAttribute("GroundOffset") or 2
+	local H = Config.MAP.BELT_HALF_LENGTH
+	local y = Config.MAP.BELT_Y + 0.5 + off
+	local startCF = CFrame.new(0, y, -H)
+	local endCF = CFrame.new(0, y, H + 6)
+	local body = model.PrimaryPart :: BasePart
+	model:PivotTo(CFrame.lookAt(startCF.Position, startCF.Position + Vector3.new(0, 0, 1)))
+	model.Parent = beltFolder
+
+	local price = Config.priceOf(def, mut)
+	Tags.goober(body, def, mut, true)
+
+	local item: any = { model = model, root = body, def = def, mut = mut, price = price, sold = false }
+	if reservedFor then
+		item.reservedFor = reservedFor
+		item.reservedUntil = workspace:GetServerTimeNow() + 25
+	end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "Buy " .. Util.money(price)
+	prompt.ObjectText = (if mut ~= "Normal" then mut .. " " else "") .. def.name
+	prompt.HoldDuration = Config.BELT.BUY_HOLD
+	prompt.MaxActivationDistance = 13
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = body
+	prompt.Triggered:Connect(function(player)
+		Belt.TryBuy(player, item)
+	end)
+
+	local dist = (endCF.Position - startCF.Position).Magnitude
+	local lookAtCF = CFrame.lookAt(endCF.Position, endCF.Position + Vector3.new(0, 0, 1))
+	local tween = TweenService:Create(body, TweenInfo.new(dist / Config.BELT.SPEED, Enum.EasingStyle.Linear), { CFrame = lookAtCF })
+	item.tween = tween
+	items[model] = item
+	itemCount += 1
+	tween.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed and model.Parent then
+			Belt.Remove(item)
+		end
+	end)
+	tween:Play()
+
+	local rar = Config.Rarity[def.rarity]
+	if rar.order >= 5 then
+		Net.get("Announce"):FireAllClients(
+			"A " .. string.upper(def.rarity) .. " " .. (if mut ~= "Normal" then mut .. " " else "") .. def.name .. " is rolling down the belt!",
+			rar.color
+		)
+		Net.get("Shake"):FireAllClients(0.25, 0.6)
+	end
+	return item
+end
+
+function Belt.Remove(item: any)
+	if items[item.model] then
+		items[item.model] = nil
+		itemCount -= 1
+	end
+	if item.tween then
+		item.tween:Cancel()
+	end
+	if item.model.Parent then
+		item.model:Destroy()
+	end
+end
+
+-- Used by the Director panel and the "Summon a Mythic" product.
+function Belt.QueueSpecial(def: any, mut: string?, reservedFor: number?)
+	table.insert(forceNext, { def = def, mut = mut, reservedFor = reservedFor })
+end
+
+----------------------------------------------------------------------
+-- Buying
+----------------------------------------------------------------------
+function Belt.TryBuy(player: Player, item: any)
+	local ps = State.get(player)
+	if not ps or item.sold or not item.model.Parent then
+		return
+	end
+	if ps.rl.buy and os.clock() - ps.rl.buy < 0.15 then
+		return
+	end
+	ps.rl.buy = os.clock()
+
+	if item.reservedFor and item.reservedFor ~= player.UserId and workspace:GetServerTimeNow() < item.reservedUntil then
+		S.Data.Notify(player, "Reserved for someone else for a few more seconds!", "error")
+		return
+	end
+	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp or (hrp.Position - item.root.Position).Magnitude > 30 then
+		return
+	end
+	local slot = S.Economy.freeSlot(ps)
+	if not slot then
+		S.Data.Notify(player, "Your base is full! Unlock a slot or Rebirth.", "error")
+		return
+	end
+	if not S.Economy.spend(ps, item.price) then
+		S.Data.Notify(player, "Not enough cash! Need " .. Util.money(item.price), "error")
+		return
+	end
+
+	item.sold = true
+	local def, mut = item.def, item.mut
+	local pos = item.root.Position
+	Belt.Remove(item)
+	Belt.Poof(pos + Vector3.new(0, 2, 0), Config.Rarity[def.rarity].color)
+
+	S.Plot.PlaceNew(ps, slot, def.id, mut)
+	ps.data.stats.bought += 1
+	if not ps.data.tutorial.bought then
+		ps.data.tutorial.bought = true
+		S.Analytics.step(player, 2, "FirstBuy")
+	end
+	Net.get("Sfx"):FireClient(player, "buy")
+
+	local rar = Config.Rarity[def.rarity]
+	if rar.order >= 4 then
+		Net.get("Reveal"):FireClient(player, {
+			title = string.upper(def.rarity) .. "!",
+			name = (if mut ~= "Normal" then mut .. " " else "") .. def.name,
+			color = rar.color,
+			rarity = def.rarity,
+			cps = Config.cpsOf(def, mut),
+		})
+	end
+	if rar.order >= 5 then
+		Net.get("Announce"):FireAllClients(
+			player.DisplayName .. " bought a " .. string.upper(def.rarity) .. " " .. (if mut ~= "Normal" then mut .. " " else "") .. def.name .. "!!",
+			rar.color
+		)
+		ps.data.stats.legendaryFound = (ps.data.stats.legendaryFound or 0) + 1
+	end
+end
+
+----------------------------------------------------------------------
+-- Init
+----------------------------------------------------------------------
+function Belt.Init(services: any)
+	S = services
+	beltFolder = Instance.new("Folder")
+	beltFolder.Name = "Belt"
+	beltFolder.Parent = workspace
+
+	task.spawn(function()
+		while true do
+			local surge = S.Tide.isSurge()
+			task.wait(if surge then Config.BELT.SPAWN_EVERY_SURGE else Config.BELT.SPAWN_EVERY)
+			if #State.list() > 0 then
+				local forced = table.remove(forceNext, 1)
+				if forced then
+					Belt.Spawn(forced.def, forced.mut, forced.reservedFor)
+				elseif itemCount < Config.BELT.MAX_ITEMS then
+					Belt.Spawn()
+				end
+			end
+		end
+	end)
+end
+
+return Belt
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="13">
+          <Properties>
+            <string name="Name">Data</string>
+            <string name="Source"><![CDATA[-- Persistence: DataStore with session locking (prevents item duplication across servers),
+-- autosave, and a throttled snapshot push to the owning client.
+
+local DataStoreService = game:GetService("DataStoreService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local State = require(script.Parent.State)
+
+local Data = {}
+
+local TEMPLATE = {
+	version = 1,
+	cash = Config.START_CASH,
+	rebirths = 0,
+	slotUpgrades = 0,
+	goobers = {}, -- list of { slot, id, mut, stash }
+	discovered = {}, -- [creatureId] = true
+	discoveredMut = {}, -- [mutationName] = true
+	stats = {
+		steals = 0,
+		stolen = 0,
+		defends = 0,
+		bought = 0,
+		collects = 0,
+		tidesSurvived = 0,
+		tidesSwept = 0,
+		totalEarned = 0,
+		playTime = 0,
+		sessions = 0,
+	},
+	daily = { lastDay = 0, streak = 0 },
+	spin = { last = 0 },
+	codes = {},
+	shields = 0,
+	tutorial = { bought = false, collected = false, stole = false, rebirthed = false },
+	receipts = {},
+	lastSeen = 0,
+}
+
+local S: any -- services registry
+local store: DataStore? = nil
+local dirtyPlayers: { [Player]: boolean } = {}
+
+local function reconcile(target: any, template: any)
+	for k, v in template do
+		if target[k] == nil then
+			target[k] = Util.deepCopy(v)
+		elseif type(v) == "table" and type(target[k]) == "table" and next(v) ~= nil then
+			reconcile(target[k], v)
+		end
+	end
+end
+
+local function serialize(ps: any)
+	local d = ps.data
+	local list = {}
+	for slot, e in ps.slots do
+		table.insert(list, { slot = slot, id = e.id, mut = e.mut, stash = e.stash or 0 })
+	end
+	d.goobers = list
+	d.lastSeen = os.time()
+	d.stats.playTime += ps.playSeconds - (ps.playSecondsSaved or 0)
+	ps.playSecondsSaved = ps.playSeconds
+	return d
+end
+
+local function keyFor(player: Player): string
+	return "P_" .. player.UserId
+end
+
+function Data.Init(services: any)
+	S = services
+	Net.get("Data") -- ensure exists
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(Config.DATA_STORE)
+	end)
+	if ok then
+		store = result
+	else
+		warn("[GooberTide] DataStore unavailable:", result)
+	end
+
+	-- flush dirty snapshots to clients at 4 Hz
+	task.spawn(function()
+		while true do
+			task.wait(0.25)
+			for player in dirtyPlayers do
+				dirtyPlayers[player] = nil
+				local ps = State.get(player)
+				if ps and player.Parent then
+					Data.Push(ps)
+				end
+			end
+		end
+	end)
+
+	-- autosave loop (staggered)
+	task.spawn(function()
+		while true do
+			task.wait(Config.AUTOSAVE_SECONDS)
+			for _, ps in State.list() do
+				task.spawn(Data.Save, ps, false)
+				task.wait(0.4)
+			end
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- Load
+----------------------------------------------------------------------
+function Data.LoadPlayer(player: Player)
+	local raw: any = nil
+	local ephemeral = false
+
+	if store then
+		for attempt = 1, 8 do
+			if not player.Parent then
+				return nil
+			end
+			local captured: any = nil
+			local ok, err = pcall(function()
+				local st = store :: DataStore
+				st:UpdateAsync(keyFor(player), function(old)
+					old = old or {}
+					local lock = old._lock
+					if lock and lock.job ~= game.JobId and os.time() - lock.t < Config.SESSION_LOCK_SECONDS then
+						return nil -- another server still owns this profile
+					end
+					old._lock = { job = game.JobId, t = os.time() }
+					captured = old
+					return old
+				end)
+			end)
+			if ok then
+				if captured then
+					raw = captured
+					break
+				end
+				task.wait(4) -- locked elsewhere; wait for the other server to release
+			else
+				local msg = tostring(err)
+				if RunService:IsStudio() and (string.find(msg, "StudioAccessToApisNotAllowed") or string.find(msg, "403")) then
+					warn("[GooberTide] Studio API access is off - running with temporary data. Enable Game Settings > Security > Enable Studio Access to API Services to test saving.")
+					ephemeral = true
+					break
+				end
+				warn("[GooberTide] load failed:", msg)
+				task.wait(math.min(2 ^ attempt, 12))
+			end
+		end
+		if not raw and not ephemeral then
+			return nil
+		end
+	else
+		ephemeral = true
+	end
+
+	local profile = raw or {}
+	profile._lock = nil
+	reconcile(profile, TEMPLATE)
+
+	local ps: any = {
+		player = player,
+		data = profile,
+		slots = {}, -- [slotIndex] = { id, mut, stash, inTransit? }
+		ephemeral = ephemeral,
+		passes = {},
+		joinedAt = os.clock(),
+		playSeconds = 0,
+		claimedGifts = {},
+		carry = nil,
+		plot = nil,
+		rl = {},
+		loaded = true,
+	}
+	for _, e in profile.goobers do
+		if Config.CreatureById[e.id] and e.slot and e.slot >= 1 and e.slot <= Config.MAX_SLOTS then
+			ps.slots[e.slot] = { id = e.id, mut = Config.Mutations[e.mut] and e.mut or "Normal", stash = e.stash or 0 }
+		end
+	end
+	profile.stats.sessions += 1
+	State.byPlayer[player] = ps
+	return ps
+end
+
+----------------------------------------------------------------------
+-- Save
+----------------------------------------------------------------------
+function Data.Save(ps: any, release: boolean): boolean
+	if ps.ephemeral or not store then
+		return true
+	end
+	if ps.saving then
+		return false
+	end
+	ps.saving = true
+	local snapshot = Util.deepCopy(serialize(ps))
+	local success = false
+	for attempt = 1, 5 do
+		local ok, err = pcall(function()
+			local st = store :: DataStore
+			st:UpdateAsync(keyFor(ps.player), function(old)
+				if old and old._lock and old._lock.job ~= game.JobId and os.time() - old._lock.t < Config.SESSION_LOCK_SECONDS then
+					return nil -- we lost the lock; do not overwrite
+				end
+				snapshot._lock = if release then nil else { job = game.JobId, t = os.time() }
+				return snapshot
+			end)
+		end)
+		if ok then
+			success = true
+			break
+		end
+		warn("[GooberTide] save failed (" .. attempt .. "):", err)
+		task.wait(2 ^ attempt)
+	end
+	ps.saving = false
+	return success
+end
+
+-- Remove a leaving player's state and persist it for the last time.
+function Data.SaveAndRelease(ps: any)
+	State.byPlayer[ps.player] = nil
+	dirtyPlayers[ps.player] = nil
+	Data.Save(ps, true)
+end
+
+function Data.SaveAllOnClose()
+	local pending = 0
+	for _, ps in State.list() do
+		pending += 1
+		task.spawn(function()
+			State.byPlayer[ps.player] = nil
+			Data.Save(ps, true)
+			pending -= 1
+		end)
+	end
+	local t = os.clock()
+	while pending > 0 and os.clock() - t < 25 do
+		task.wait(0.2)
+	end
+end
+
+----------------------------------------------------------------------
+-- Client sync
+----------------------------------------------------------------------
+function Data.MarkDirty(ps: any)
+	dirtyPlayers[ps.player] = true
+end
+
+function Data.Push(ps: any)
+	if not ps.player.Parent then
+		return
+	end
+	local snap = S.Economy.Snapshot(ps)
+	Net.get("Data"):FireClient(ps.player, snap)
+end
+
+function Data.Notify(player: Player, text: string, kind: string?)
+	Net.get("Notify"):FireClient(player, text, kind or "info")
+end
+
+return Data
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="14">
+          <Properties>
+            <string name="Name">Director</string>
+            <string name="Source"><![CDATA[-- "Director mode": a hidden panel (bottom-right button) for the people who record marketing
+-- footage. Lets you trigger a Tide, drop a Mythic on the belt, grant cash, etc. on demand.
+-- Active for anyone inside Roblox Studio and for the UserIds in Config.DIRECTORS.
+
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Net = require(Shared.Net)
+local State = require(script.Parent.State)
+
+local Director = {}
+local S: any
+
+function Director.isDirector(player: Player): boolean
+	if RunService:IsStudio() then
+		return true
+	end
+	return table.find(Config.DIRECTORS, player.UserId) ~= nil
+end
+
+local function defOfRarity(rarity: string)
+	local defs = {}
+	for _, d in Config.Creatures do
+		if d.rarity == rarity then
+			table.insert(defs, d)
+		end
+	end
+	return if #defs > 0 then defs[math.random(1, #defs)] else nil
+end
+
+function Director.Init(services: any)
+	S = services
+	Net.get("Director").OnServerEvent:Connect(function(player, cmd, arg)
+		if not Director.isDirector(player) or type(cmd) ~= "string" then
+			return
+		end
+		local ps = State.get(player)
+		if not ps then
+			return
+		end
+		if cmd == "tide" then
+			S.Tide.TriggerNow()
+		elseif cmd == "beach" then
+			S.Tide.SpawnBeach()
+		elseif cmd == "spawn" and type(arg) == "string" then
+			local rarity, mut = string.match(arg, "^(%a+):?(%a*)$")
+			local def = rarity and defOfRarity(rarity)
+			if def then
+				S.Belt.Spawn(def, if mut and Config.Mutations[mut] then mut else nil)
+			end
+		elseif cmd == "cash" and type(arg) == "number" then
+			S.Economy.addCash(ps, math.clamp(arg, 0, 1e18), false)
+		elseif cmd == "luck" then
+			S.Rewards.ApplyServerLuck(4, 5, player.DisplayName)
+		elseif cmd == "shield" then
+			ps.data.shields += 3
+			S.Data.MarkDirty(ps)
+		elseif cmd == "slots" then
+			ps.data.slotUpgrades = Config.MAX_SLOTS
+			S.Plot.RefreshAllPads(ps)
+		elseif cmd == "giveSlot" and type(arg) == "string" then
+			local id, mut = string.match(arg, "^(%w+):?(%a*)$")
+			local slot = S.Economy.freeSlot(ps)
+			if id and slot and Config.CreatureById[id] then
+				S.Plot.PlaceNew(ps, slot, id, if mut ~= "" and Config.Mutations[mut] then mut else "Normal")
+			end
+		elseif cmd == "lockrefill" then
+			ps.lockReadyAt = 0
+			S.Data.MarkDirty(ps)
+		end
+	end)
+end
+
+return Director
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="15">
+          <Properties>
+            <string name="Name">Economy</string>
+            <string name="Source"><![CDATA[-- Income, stash, collecting, slots, rebirth and the snapshot sent to clients.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local State = require(script.Parent.State)
+
+local Economy = {}
+local S: any
+
+function Economy.Init(services: any)
+	S = services
+
+	-- income tick, once per second
+	task.spawn(function()
+		local last = os.clock()
+		while true do
+			task.wait(1)
+			local now = os.clock()
+			local dt = now - last
+			last = now
+			for _, ps in State.list() do
+				ps.playSeconds += dt
+				Economy.Tick(ps, dt)
+			end
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- Multipliers
+----------------------------------------------------------------------
+function Economy.multiplier(ps: any): number
+	local m = Config.rebirthMult(ps.data.rebirths)
+	if ps.passes.Cash2x then
+		m *= 2
+	end
+	if ps.passes.VIP then
+		m *= 1.25
+	end
+	if S.Tide and S.Tide.isSurge() then
+		m *= Config.TIDE.SURGE_INCOME_MULT
+	end
+	return m
+end
+
+function Economy.entryCps(entry: any): number
+	local def = Config.CreatureById[entry.id]
+	if not def then
+		return 0
+	end
+	return Config.cpsOf(def, entry.mut)
+end
+
+function Economy.totalCps(ps: any): number
+	local total = 0
+	for _, e in ps.slots do
+		if not e.inTransit then
+			total += Economy.entryCps(e)
+		end
+	end
+	return total * Economy.multiplier(ps)
+end
+
+function Economy.slotsUnlocked(ps: any): number
+	local n = Config.BASE_SLOTS + ps.data.slotUpgrades + ps.data.rebirths
+	if ps.passes.Slots4 then
+		n += 4
+	end
+	return math.min(n, Config.MAX_SLOTS)
+end
+
+function Economy.freeSlot(ps: any): number?
+	for i = 1, Economy.slotsUnlocked(ps) do
+		if not ps.slots[i] then
+			return i
+		end
+	end
+	return nil
+end
+
+function Economy.lockDuration(ps: any): number
+	return if ps.passes.VIP then Config.LOCK_DURATION_VIP else Config.LOCK_DURATION
+end
+
+----------------------------------------------------------------------
+-- Cash
+----------------------------------------------------------------------
+function Economy.addCash(ps: any, amount: number, countAsEarned: boolean?)
+	ps.data.cash += amount
+	if countAsEarned and amount > 0 then
+		ps.data.stats.totalEarned += amount
+	end
+	S.Data.MarkDirty(ps)
+end
+
+function Economy.spend(ps: any, amount: number): boolean
+	if ps.data.cash >= amount then
+		ps.data.cash -= amount
+		S.Data.MarkDirty(ps)
+		return true
+	end
+	return false
+end
+
+----------------------------------------------------------------------
+-- Income tick
+----------------------------------------------------------------------
+function Economy.Tick(ps: any, dt: number)
+	local mult = Economy.multiplier(ps)
+	local autoCollect = ps.passes.AutoCollect
+	local changed = false
+	for slot, e in ps.slots do
+		if not e.inTransit then
+			local gain = Economy.entryCps(e) * mult * dt
+			if autoCollect then
+				ps.data.cash += gain
+				ps.data.stats.totalEarned += gain
+				changed = true
+			else
+				local cap = Economy.entryCps(e) * mult * 3600 * Config.STASH_HOURS
+				e.stash = math.min((e.stash or 0) + gain, math.max(cap, 1))
+				S.Plot.UpdatePad(ps, slot)
+			end
+		end
+	end
+	if changed then
+		S.Data.MarkDirty(ps)
+	end
+	S.Plot.UpdateSign(ps)
+	if (ps.playSeconds % 5) < dt then
+		S.Data.MarkDirty(ps) -- keeps the HUD cps / gift timers fresh
+	end
+end
+
+function Economy.Collect(ps: any, slot: number): number
+	local e = ps.slots[slot]
+	if not e or e.inTransit then
+		return 0
+	end
+	local amount = e.stash or 0
+	if amount < 1 then
+		return 0
+	end
+	e.stash = 0
+	Economy.addCash(ps, amount, true)
+	ps.data.stats.collects += 1
+	S.Plot.UpdatePad(ps, slot)
+	S.Plot.PopCash(ps, slot, amount)
+	if not ps.data.tutorial.collected then
+		ps.data.tutorial.collected = true
+		S.Analytics.step(ps.player, 3, "FirstCollect")
+	end
+	return amount
+end
+
+function Economy.CollectAll(ps: any): number
+	local total = 0
+	for slot in ps.slots do
+		total += Economy.Collect(ps, slot)
+	end
+	if total > 0 then
+		Net.get("Sfx"):FireClient(ps.player, "collect")
+	end
+	return total
+end
+
+----------------------------------------------------------------------
+-- Slots / rebirth
+----------------------------------------------------------------------
+function Economy.UpgradeSlot(ps: any): boolean
+	local unlocked = Economy.slotsUnlocked(ps)
+	if unlocked >= Config.MAX_SLOTS then
+		S.Data.Notify(ps.player, "All slots unlocked!", "info")
+		return false
+	end
+	local cost = Config.slotUpgradeCost(ps.data.slotUpgrades)
+	if not Economy.spend(ps, cost) then
+		S.Data.Notify(ps.player, "Need " .. Util.money(cost) .. " to unlock a slot", "error")
+		return false
+	end
+	ps.data.slotUpgrades += 1
+	S.Plot.RefreshAllPads(ps)
+	S.Data.Notify(ps.player, "New slot unlocked!", "good")
+	Net.get("Sfx"):FireClient(ps.player, "buy")
+	return true
+end
+
+function Economy.Rebirth(ps: any): boolean
+	local cost = Config.rebirthCost(ps.data.rebirths)
+	if ps.data.cash < cost then
+		S.Data.Notify(ps.player, "You need " .. Util.money(cost) .. " to Rebirth", "error")
+		return false
+	end
+	if ps.carry then
+		S.Data.Notify(ps.player, "Deliver the goober you're carrying first!", "error")
+		return false
+	end
+	for _, e in ps.slots do
+		if e.inTransit then
+			S.Data.Notify(ps.player, "Wait until your stolen goober is resolved before rebirthing!", "error")
+			return false
+		end
+	end
+	ps.data.rebirths += 1
+	ps.data.cash = Config.rebirthStartCash(ps.data.rebirths)
+	-- keep Mythic+ goobers, repack them into the first slots
+	local keep = {}
+	for slot = 1, Config.MAX_SLOTS do
+		local e = ps.slots[slot]
+		if e and not e.inTransit then
+			local def = Config.CreatureById[e.id]
+			if def and Config.Rarity[def.rarity].order >= 6 then
+				table.insert(keep, { id = e.id, mut = e.mut, stash = 0 })
+			end
+		end
+	end
+	ps.slots = {}
+	for i, e in keep do
+		ps.slots[i] = e
+	end
+	S.Plot.RebuildAll(ps)
+	if not ps.data.tutorial.rebirthed then
+		ps.data.tutorial.rebirthed = true
+		S.Analytics.step(ps.player, 5, "FirstRebirth")
+	end
+	S.Data.Notify(ps.player, "REBIRTH " .. ps.data.rebirths .. "! Income x" .. Config.rebirthMult(ps.data.rebirths), "good")
+	Net.get("Announce"):FireAllClients(ps.player.DisplayName .. " just REBIRTHED (x" .. ps.data.rebirths .. ")!", Color3.fromRGB(255, 120, 255))
+	Net.get("Reveal"):FireClient(ps.player, { title = "REBIRTH " .. ps.data.rebirths, name = "Income x" .. Config.rebirthMult(ps.data.rebirths), color = Color3.fromRGB(255, 120, 255), rarity = "Rebirth" })
+	S.Data.Save(ps, false)
+	S.Data.MarkDirty(ps)
+	return true
+end
+
+function Economy.OfflineEarnings(ps: any)
+	local last = ps.data.lastSeen
+	if last <= 0 then
+		return
+	end
+	local elapsed = os.time() - last
+	if elapsed < 90 then
+		return
+	end
+	local cap = (if ps.passes.VIP then Config.OFFLINE_MAX_HOURS_VIP else Config.OFFLINE_MAX_HOURS) * 3600
+	local gain = Economy.totalCps(ps) * math.min(elapsed, cap) * Config.OFFLINE_RATE
+	if gain >= 1 then
+		Economy.addCash(ps, gain, true)
+		task.delay(3, function()
+			if ps.player.Parent then
+				S.Data.Notify(ps.player, "Welcome back! Your goobers earned " .. Util.money(gain) .. " while you were away", "good")
+			end
+		end)
+	end
+end
+
+----------------------------------------------------------------------
+-- Reward helper shared by daily / spin / gifts / codes
+----------------------------------------------------------------------
+-- Returns a short description string, or nil if the reward could not be given.
+function Economy.GrantReward(ps: any, r: any): string?
+	local luckMult = if ps.passes.Luck then 2 else 1
+	if r.kind == "cash" then
+		local amount = math.max(r.floor or 0, Economy.totalCps(ps) * 60 * r.minutes)
+		Economy.addCash(ps, amount, true)
+		return Util.money(amount)
+	elseif r.kind == "luck" then
+		S.Rewards.ApplyServerLuck(2, r.minutes, ps.player.DisplayName)
+		return "Server Luck x2 for " .. r.minutes .. "m"
+	elseif r.kind == "shield" then
+		ps.data.shields += r.amount
+		S.Data.MarkDirty(ps)
+		return r.amount .. " Tide Shield" .. (if r.amount > 1 then "s" else "")
+	elseif r.kind == "goober" then
+		local slot = Economy.freeSlot(ps)
+		if not slot then
+			return nil
+		end
+		local def = S.Belt.rollDef(luckMult, r.minOrder, r.maxOrder)
+		if not def then
+			return nil
+		end
+		S.Plot.PlaceNew(ps, slot, def.id, "Normal")
+		return def.rarity .. " " .. def.name
+	elseif r.kind == "lock" then
+		ps.lockReadyAt = 0
+		S.Data.MarkDirty(ps)
+		return "Base Lock refreshed"
+	end
+	return nil
+end
+
+----------------------------------------------------------------------
+-- Snapshot sent to the client
+----------------------------------------------------------------------
+function Economy.Snapshot(ps: any)
+	local d = ps.data
+	local now = os.time()
+	local serverNow = workspace:GetServerTimeNow()
+	local today = now // 86400
+	local dailyReady = d.daily.lastDay < today
+	local streak = d.daily.streak
+	if dailyReady and d.daily.lastDay < today - 1 then
+		streak = 0
+	end
+	local giftsClaimed = {}
+	for i in ps.claimedGifts do
+		giftsClaimed[i] = true
+	end
+	local passes = {}
+	for k in ps.passes do
+		passes[k] = true
+	end
+	local unlocked = Economy.slotsUnlocked(ps)
+	local slotsOwned = {}
+	for slot, e in ps.slots do
+		slotsOwned[slot] = { id = e.id, mut = e.mut }
+	end
+	return {
+		cash = d.cash,
+		cps = Economy.totalCps(ps),
+		mult = Economy.multiplier(ps),
+		rebirths = d.rebirths,
+		rebirthCost = Config.rebirthCost(d.rebirths),
+		rebirthMult = Config.rebirthMult(d.rebirths),
+		rebirthMultNext = Config.rebirthMult(d.rebirths + 1),
+		slotsUnlocked = unlocked,
+		slotCost = if unlocked < Config.MAX_SLOTS then Config.slotUpgradeCost(d.slotUpgrades) else nil,
+		luck = { mult = State.currentLuck(), endsAt = State.luck.endsAt },
+		passes = passes,
+		dailyReady = dailyReady,
+		dailyStreak = streak,
+		spinReady = now - d.spin.last >= Config.SPIN_COOLDOWN,
+		spinIn = math.max(0, Config.SPIN_COOLDOWN - (now - d.spin.last)),
+		playSeconds = ps.playSeconds,
+		giftsClaimed = giftsClaimed,
+		discovered = d.discovered,
+		discoveredMut = d.discoveredMut,
+		owned = slotsOwned,
+		stats = d.stats,
+		shields = d.shields,
+		tutorial = d.tutorial,
+		lockReadyAt = ps.lockReadyAt or 0,
+		lockUntil = ps.plot and ps.plot.lockedUntil or 0,
+		isDirector = S.Director.isDirector(ps.player),
+		serverNow = serverNow,
+		carrying = ps.carry ~= nil,
+	}
+end
+
+return Economy
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="16">
+          <Properties>
+            <string name="Name">Leaderboard</string>
+            <string name="Source"><![CDATA[-- Two global boards in the plaza: richest players and top thieves (OrderedDataStores).
+
+local DataStoreService = game:GetService("DataStoreService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local State = require(script.Parent.State)
+
+local Leaderboard = {}
+local S: any
+local nameCache: { [number]: string } = {}
+
+local boards: { [string]: any } = {}
+
+local function nameOf(userId: number): string
+	if nameCache[userId] then
+		return nameCache[userId]
+	end
+	local ok, n = pcall(function()
+		return Players:GetNameFromUserIdAsync(userId)
+	end)
+	nameCache[userId] = if ok then n else ("Player" .. userId)
+	return nameCache[userId]
+end
+
+local function render(board: any, rows: { any }, formatter: (number) -> string)
+	for i = 1, 10 do
+		local label = board.rows[i]
+		local row = rows[i]
+		if label then
+			if row then
+				label.Text = string.format("%d. %s  -  %s", i, nameOf(tonumber(row.key) :: number), formatter(row.value))
+			else
+				label.Text = string.format("%d. ---", i)
+			end
+		end
+	end
+end
+
+-- Called by Map once the SurfaceGuis exist: boards = { cash = {rows}, steals = {rows} }
+function Leaderboard.Register(name: string, rows: { TextLabel })
+	boards[name] = { rows = rows }
+end
+
+function Leaderboard.Init(services: any)
+	S = services
+	local okC, cashStore = pcall(function()
+		return DataStoreService:GetOrderedDataStore(Config.LB_CASH_STORE)
+	end)
+	local okS, stealStore = pcall(function()
+		return DataStoreService:GetOrderedDataStore(Config.LB_STEAL_STORE)
+	end)
+	if not (okC and okS) then
+		return
+	end
+
+	task.spawn(function()
+		task.wait(8)
+		while true do
+			-- publish
+			for _, ps in State.list() do
+				if not ps.ephemeral then
+					local earned = math.floor(math.min(ps.data.stats.totalEarned, 9e15))
+					pcall(function()
+						cashStore:SetAsync(tostring(ps.player.UserId), earned)
+						stealStore:SetAsync(tostring(ps.player.UserId), ps.data.stats.steals)
+					end)
+				end
+			end
+			-- fetch
+			if boards.cash then
+				local ok, pages = pcall(function()
+					return cashStore:GetSortedAsync(false, 10)
+				end)
+				if ok then
+					local rows = {}
+					for _, e in pages:GetCurrentPage() do
+						table.insert(rows, e)
+					end
+					render(boards.cash, rows, function(v)
+						return Util.money(v)
+					end)
+				end
+			end
+			if boards.steals then
+				local ok, pages = pcall(function()
+					return stealStore:GetSortedAsync(false, 10)
+				end)
+				if ok then
+					local rows = {}
+					for _, e in pages:GetCurrentPage() do
+						table.insert(rows, e)
+					end
+					render(boards.steals, rows, function(v)
+						return Util.formatNumber(v) .. " steals"
+					end)
+				end
+			end
+			task.wait(120)
+		end
+	end)
+end
+
+return Leaderboard
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="17">
+          <Properties>
+            <string name="Name">Map</string>
+            <string name="Source"><![CDATA[-- Builds the whole world from code: ground, plaza, the Goober Belt, gates, palms, ocean,
+-- boundary walls, leaderboards and lighting. No marketplace assets are required.
+
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+
+local Map = {}
+local S: any
+local M = Config.MAP
+
+local folder: Folder
+
+local function part(props: { [string]: any }, parent: Instance?): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in props do
+		(p :: any)[k] = v
+	end
+	p.Parent = parent or folder
+	return p
+end
+
+local function surfaceText(p: BasePart, face: Enum.NormalId, text: string, color: Color3?, bg: Color3?): TextLabel
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = face
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	sg.PixelsPerStud = 40
+	sg.LightInfluence = 0
+	sg.Parent = p
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.fromScale(1, 1)
+	l.BackgroundTransparency = if bg then 0 else 1
+	l.BackgroundColor3 = bg or Color3.new(0, 0, 0)
+	l.Text = text
+	l.TextScaled = true
+	l.Font = Enum.Font.FredokaOne
+	l.TextColor3 = color or Color3.new(1, 1, 1)
+	l.TextStrokeTransparency = 0
+	l.Parent = sg
+	return l
+end
+
+----------------------------------------------------------------------
+-- Lighting
+----------------------------------------------------------------------
+local function setupLighting()
+	Lighting.ClockTime = 14.5
+	Lighting.Brightness = 2.6
+	Lighting.Ambient = Color3.fromRGB(110, 120, 140)
+	Lighting.OutdoorAmbient = Color3.fromRGB(140, 170, 190)
+	Lighting.EnvironmentDiffuseScale = 0.6
+	Lighting.EnvironmentSpecularScale = 0.6
+	Lighting.GlobalShadows = true
+	Lighting.ShadowSoftness = 0.3
+
+	if not Lighting:FindFirstChildOfClass("Sky") then
+		Instance.new("Sky").Parent = Lighting
+	end
+	local atm = Lighting:FindFirstChildOfClass("Atmosphere") or Instance.new("Atmosphere")
+	atm.Density = 0.3
+	atm.Offset = 0.25
+	atm.Color = Color3.fromRGB(199, 225, 255)
+	atm.Decay = Color3.fromRGB(255, 220, 180)
+	atm.Glare = 0.2
+	atm.Haze = 1.0
+	atm.Parent = Lighting
+
+	local bloom = Lighting:FindFirstChildOfClass("BloomEffect") or Instance.new("BloomEffect")
+	bloom.Intensity = 0.5
+	bloom.Size = 28
+	bloom.Threshold = 1.6
+	bloom.Parent = Lighting
+
+	local cc = Lighting:FindFirstChildOfClass("ColorCorrectionEffect") or Instance.new("ColorCorrectionEffect")
+	cc.Saturation = 0.18
+	cc.Contrast = 0.08
+	cc.TintColor = Color3.fromRGB(255, 250, 245)
+	cc.Parent = Lighting
+
+	local rays = Lighting:FindFirstChildOfClass("SunRaysEffect") or Instance.new("SunRaysEffect")
+	rays.Intensity = 0.06
+	rays.Spread = 0.6
+	rays.Parent = Lighting
+end
+
+----------------------------------------------------------------------
+-- Pieces
+----------------------------------------------------------------------
+local function buildGround()
+	local W = M.WORLD_HALF
+	part({ Name = "Ground", Size = Vector3.new(W * 2 + 40, 2, W * 2 + 40), Position = Vector3.new(0, -1, 0), Color = Color3.fromRGB(110, 205, 110), Material = Enum.Material.Grass })
+	part({ Name = "PlazaFloor", Size = Vector3.new(190, 0.2, M.BELT_HALF_LENGTH * 2 + 70), Position = Vector3.new(0, 0.1, 0), Color = Color3.fromRGB(240, 222, 170), Material = Enum.Material.Sand })
+	for _, sx in { -1, 1 } do
+		part({ Name = "PlazaTrim", Size = Vector3.new(2, 0.3, M.BELT_HALF_LENGTH * 2 + 70), Position = Vector3.new(sx * 95, 0.15, 0), Color = Color3.fromRGB(255, 255, 255), Material = Enum.Material.Neon, Transparency = 0.2 })
+	end
+
+	-- sea on all four sides + invisible walls
+	local seaColor = Color3.fromRGB(40, 150, 235)
+	for _, sz in { -1, 1 } do
+		part({ Name = "Sea", Size = Vector3.new(W * 2 + 800, 8, 400), Position = Vector3.new(0, -4.3, sz * (W + 220)), Color = seaColor, Material = Enum.Material.Glass, Transparency = 0.25, CanCollide = false })
+		part({ Name = "SeaSide", Size = Vector3.new(400, 8, W * 2 + 40), Position = Vector3.new(sz * (W + 220), -4.3, 0), Color = seaColor, Material = Enum.Material.Glass, Transparency = 0.25, CanCollide = false })
+		part({ Name = "WallZ", Size = Vector3.new(W * 2 + 80, 120, 2), Position = Vector3.new(0, 60, sz * (W + 10)), Transparency = 1, CanQuery = false })
+		part({ Name = "WallX", Size = Vector3.new(2, 120, W * 2 + 80), Position = Vector3.new(sz * (W + 10), 60, 0), Transparency = 1, CanQuery = false })
+	end
+end
+
+local function buildBelt()
+	local H = M.BELT_HALF_LENGTH
+	part({ Name = "Belt", Size = Vector3.new(10, 1.4, H * 2 + 12), Position = Vector3.new(0, 0.8, 0), Color = Color3.fromRGB(45, 48, 62), Material = Enum.Material.Metal })
+	for _, sx in { -1, 1 } do
+		part({ Name = "BeltEdge", Size = Vector3.new(0.7, 1.6, H * 2 + 12), Position = Vector3.new(sx * 5.2, 0.8, 0), Color = Color3.fromRGB(80, 235, 255), Material = Enum.Material.Neon })
+	end
+	-- direction chevrons
+	for z = -H + 10, H - 10, 16 do
+		part({ Name = "Chevron", Size = Vector3.new(6, 0.1, 1.2), CFrame = CFrame.new(0, 1.52, z), Color = Color3.fromRGB(255, 220, 80), Material = Enum.Material.Neon, CanCollide = false })
+	end
+
+	-- entrance arch
+	local z0 = -H - 10
+	for _, sx in { -1, 1 } do
+		part({ Name = "ArchPillar", Size = Vector3.new(3.5, 26, 3.5), Position = Vector3.new(sx * 10, 13, z0), Color = Color3.fromRGB(255, 120, 190), Material = Enum.Material.SmoothPlastic })
+	end
+	local beam = part({ Name = "ArchBeam", Size = Vector3.new(26, 7, 3.5), Position = Vector3.new(0, 26, z0), Color = Color3.fromRGB(255, 255, 255), Material = Enum.Material.SmoothPlastic })
+	surfaceText(beam, Enum.NormalId.Back, "GOOBER BELT", Color3.fromRGB(255, 90, 160), Color3.fromRGB(255, 255, 255))
+	surfaceText(beam, Enum.NormalId.Front, "GOOBER BELT", Color3.fromRGB(255, 90, 160), Color3.fromRGB(255, 255, 255))
+
+	-- exit arch of shame
+	local z1 = H + 12
+	for _, sx in { -1, 1 } do
+		part({ Name = "ExitPillar", Size = Vector3.new(3.5, 20, 3.5), Position = Vector3.new(sx * 10, 10, z1), Color = Color3.fromRGB(70, 60, 90), Material = Enum.Material.Slate })
+	end
+	local beam2 = part({ Name = "ExitBeam", Size = Vector3.new(26, 6, 3.5), Position = Vector3.new(0, 21, z1), Color = Color3.fromRGB(30, 28, 45), Material = Enum.Material.Slate })
+	surfaceText(beam2, Enum.NormalId.Front, "TOO SLOW!", Color3.fromRGB(255, 80, 100), Color3.fromRGB(30, 28, 45))
+	surfaceText(beam2, Enum.NormalId.Back, "TOO SLOW!", Color3.fromRGB(255, 80, 100), Color3.fromRGB(30, 28, 45))
+end
+
+local function buildPalm(x: number, z: number)
+	local h = 13 + math.random() * 3
+	part({ Name = "Trunk", Size = Vector3.new(h, 1.6, 1.6), CFrame = CFrame.new(x, h / 2, z) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(150, 110, 70), Material = Enum.Material.Wood, CanCollide = false })
+	for i = 0, 5 do
+		local a = i / 6 * math.pi * 2
+		local dir = Vector3.new(math.cos(a), 0, math.sin(a))
+		part({
+			Name = "Leaf",
+			Size = Vector3.new(7, 0.3, 2.4),
+			CFrame = CFrame.lookAt(Vector3.new(x, h, z) + dir * 3, Vector3.new(x, h + 1.5, z)) * CFrame.Angles(0, math.rad(90), math.rad(-18)),
+			Color = Color3.fromRGB(70, 180, 80),
+			Material = Enum.Material.Grass,
+			CanCollide = false,
+		})
+	end
+end
+
+local function buildDecor()
+	math.randomseed(7)
+	for z = -M.BELT_HALF_LENGTH, M.BELT_HALF_LENGTH, 34 do
+		buildPalm(-68, z + math.random(-6, 6))
+		buildPalm(68, z + math.random(-6, 6))
+	end
+	-- safe-zone hint arrows along the plaza edges
+	for _, sx in { -1, 1 } do
+		for z = -M.BELT_HALF_LENGTH + 20, M.BELT_HALF_LENGTH - 20, 60 do
+			local sign = part({ Name = "TideSign", Size = Vector3.new(9, 4, 0.5), Position = Vector3.new(sx * 80, 5, z), Color = Color3.fromRGB(255, 80, 90), Material = Enum.Material.SmoothPlastic, CanCollide = false })
+			surfaceText(sign, Enum.NormalId.Front, "HIGH GROUND", Color3.new(1, 1, 1), Color3.fromRGB(255, 80, 90))
+			surfaceText(sign, Enum.NormalId.Back, "HIGH GROUND", Color3.new(1, 1, 1), Color3.fromRGB(255, 80, 90))
+			sign.CFrame = CFrame.new(sign.Position) * CFrame.Angles(0, math.rad(90), 0)
+		end
+	end
+	math.randomseed(os.time())
+end
+
+local function buildBoards()
+	local zb = -M.BELT_HALF_LENGTH - 28
+	local specs = {
+		{ key = "cash", x = -26, title = "RICHEST EVER", color = Color3.fromRGB(110, 255, 140) },
+		{ key = "steals", x = 26, title = "TOP THIEVES", color = Color3.fromRGB(255, 110, 130) },
+	}
+	for _, spec in specs do
+		local board = part({ Name = "Board_" .. spec.key, Size = Vector3.new(34, 22, 1.5), Position = Vector3.new(spec.x, 15, zb), Color = Color3.fromRGB(24, 26, 44), Material = Enum.Material.SmoothPlastic })
+		for _, sx in { -1, 1 } do
+			part({ Name = "BoardLeg", Size = Vector3.new(1.5, 5, 1.5), Position = Vector3.new(spec.x + sx * 14, 2.5, zb), Color = Color3.fromRGB(60, 62, 90) })
+		end
+		local sg = Instance.new("SurfaceGui")
+		sg.Face = Enum.NormalId.Back
+		sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		sg.PixelsPerStud = 30
+		sg.LightInfluence = 0
+		sg.Parent = board
+		local title = Instance.new("TextLabel")
+		title.Size = UDim2.fromScale(1, 0.14)
+		title.BackgroundTransparency = 1
+		title.Text = spec.title
+		title.TextColor3 = spec.color
+		title.Font = Enum.Font.FredokaOne
+		title.TextScaled = true
+		title.Parent = sg
+		local rows = {}
+		for i = 1, 10 do
+			local l = Instance.new("TextLabel")
+			l.Position = UDim2.fromScale(0.04, 0.15 + (i - 1) * 0.084)
+			l.Size = UDim2.fromScale(0.92, 0.08)
+			l.BackgroundTransparency = 1
+			l.Text = i .. ". ---"
+			l.TextColor3 = if i <= 3 then Color3.fromRGB(255, 220, 90) else Color3.new(1, 1, 1)
+			l.Font = Enum.Font.FredokaOne
+			l.TextScaled = true
+			l.TextXAlignment = Enum.TextXAlignment.Left
+			l.Parent = sg
+			rows[i] = l
+		end
+		S.Leaderboard.Register(spec.key, rows)
+	end
+end
+
+function Map.Init(services: any)
+	S = services
+	folder = Instance.new("Folder")
+	folder.Name = "GooberWorld"
+	folder.Parent = workspace
+
+	setupLighting()
+	buildGround()
+	buildBelt()
+	buildDecor()
+	buildBoards()
+end
+
+return Map
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="18">
+          <Properties>
+            <string name="Name">Monetization</string>
+            <string name="Source"><![CDATA[-- Game passes + developer products. All Robux ids live in Config.PASSES / Config.PRODUCTS.
+-- Purchases are idempotent (receipt ids are stored) and saved before being acknowledged.
+
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local State = require(script.Parent.State)
+
+local Monetization = {}
+local S: any
+
+function Monetization.LoadPasses(ps: any)
+	for name, p in Config.PASSES do
+		if p.id > 0 then
+			local ok, owns = pcall(function()
+				return MarketplaceService:UserOwnsGamePassAsync(ps.player.UserId, p.id)
+			end)
+			if ok and owns then
+				ps.passes[name] = true
+			end
+		end
+	end
+end
+
+local function productNameById(id: number): string?
+	for name, p in Config.PRODUCTS do
+		if p.id == id and id > 0 then
+			return name
+		end
+	end
+	return nil
+end
+
+local function giveCashMinutes(ps: any, minutes: number, floor: number)
+	local amount = math.max(floor, S.Economy.totalCps(ps) * 60 * minutes)
+	S.Economy.addCash(ps, amount, true)
+	S.Data.Notify(ps.player, "+" .. Util.money(amount) .. " added!", "good")
+end
+
+local HANDLERS: { [string]: (ps: any) -> boolean } = {
+	Cash10m = function(ps)
+		giveCashMinutes(ps, 10, 5000)
+		return true
+	end,
+	Cash1h = function(ps)
+		giveCashMinutes(ps, 60, 40000)
+		return true
+	end,
+	Cash6h = function(ps)
+		giveCashMinutes(ps, 360, 250000)
+		return true
+	end,
+	Luck = function(ps)
+		S.Rewards.ApplyServerLuck(2, 10, ps.player.DisplayName)
+		return true
+	end,
+	MegaLuck = function(ps)
+		S.Rewards.ApplyServerLuck(4, 5, ps.player.DisplayName)
+		return true
+	end,
+	Shield = function(ps)
+		ps.data.shields += 3
+		S.Data.Notify(ps.player, "+3 Tide Shields!", "good")
+		S.Data.MarkDirty(ps)
+		return true
+	end,
+	LockRefill = function(ps)
+		ps.lockReadyAt = 0
+		S.Plot.UseLock(ps, true)
+		return true
+	end,
+	MythicDrop = function(ps)
+		local defs = {}
+		for _, d in Config.Creatures do
+			if d.rarity == "Mythic" then
+				table.insert(defs, d)
+			end
+		end
+		local def = defs[math.random(1, #defs)]
+		S.Belt.Spawn(def, nil, ps.player.UserId)
+		Net.get("Announce"):FireAllClients(ps.player.DisplayName .. " SUMMONED A MYTHIC!", Config.Rarity.Mythic.color)
+		return true
+	end,
+}
+
+function Monetization.Grant(ps: any, productName: string): boolean
+	local h = HANDLERS[productName]
+	return h ~= nil and h(ps)
+end
+
+function Monetization.Init(services: any)
+	S = services
+
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, passId, purchased)
+		if not purchased then
+			return
+		end
+		local ps = State.get(player)
+		if not ps then
+			return
+		end
+		for name, p in Config.PASSES do
+			if p.id == passId then
+				ps.passes[name] = true
+				S.Data.Notify(player, "Thank you! " .. p.name .. " unlocked!", "good")
+				S.Plot.RefreshAllPads(ps)
+				S.Plot.UpdateSign(ps, true)
+				S.Data.MarkDirty(ps)
+			end
+		end
+	end)
+
+	MarketplaceService.ProcessReceipt = function(info)
+		local player = Players:GetPlayerByUserId(info.PlayerId)
+		if not player then
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+		local ps = State.get(player)
+		local t = 0
+		while not ps and t < 10 and player.Parent do
+			task.wait(0.5)
+			t += 0.5
+			ps = State.get(player)
+		end
+		if not ps then
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+		local rid = tostring(info.PurchaseId)
+		if table.find(ps.data.receipts, rid) then
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
+		local name = productNameById(info.ProductId)
+		if not name or not Monetization.Grant(ps, name) then
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+		table.insert(ps.data.receipts, rid)
+		if #ps.data.receipts > 60 then
+			table.remove(ps.data.receipts, 1)
+		end
+		if not S.Data.Save(ps, false) then
+			-- could not persist: roll back the receipt so Roblox retries
+			table.remove(ps.data.receipts)
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	end
+end
+
+return Monetization
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="19">
+          <Properties>
+            <string name="Name">Plot</string>
+            <string name="Source"><![CDATA[-- Builds the 12 raised player bases ("plots") and manages everything that lives on them:
+-- pads, goober models, stash labels, steal prompts, the base lock and the owner sign.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local Factory = require(Shared.GooberFactory)
+local State = require(script.Parent.State)
+local Tags = require(script.Parent.Tags)
+
+local Plot = {}
+local S: any
+
+local M = Config.MAP
+local PLATFORM = M.PLATFORM
+local PAD_COLS = 6
+local ROW_Z = { -5.5, 5.5, -16.5, 16.5 } -- local Z of pad rows (centre rows first)
+local PAD_COL_SPACING = 10.4
+
+local PLATFORM_COLORS = {
+	Color3.fromRGB(255, 154, 162),
+	Color3.fromRGB(255, 218, 140),
+	Color3.fromRGB(150, 230, 170),
+	Color3.fromRGB(150, 205, 255),
+	Color3.fromRGB(204, 170, 255),
+	Color3.fromRGB(255, 170, 220),
+}
+
+Plot.plots = {} :: { any }
+local plotsFolder: Folder
+
+local function padLocalCF(slot: number): CFrame
+	local i = slot - 1
+	local col = i % PAD_COLS
+	local row = i // PAD_COLS
+	local x = 26 - col * PAD_COL_SPACING
+	return CFrame.new(x, PLATFORM.Y + 0.3, ROW_Z[row + 1])
+end
+
+----------------------------------------------------------------------
+-- Construction
+----------------------------------------------------------------------
+local function buildPlot(index: number)
+	local PER = M.PLOTS_PER_SIDE
+	local west = index <= PER
+	local k = (index - 1) % PER
+	local cz = -((PER - 1) / 2) * M.PLOT_SPACING + k * M.PLOT_SPACING
+	local cx = if west then -M.PLOT_X else M.PLOT_X
+	local cf = CFrame.new(cx, 0, cz) * (if west then CFrame.identity else CFrame.Angles(0, math.pi, 0))
+	local color = PLATFORM_COLORS[(index - 1) % #PLATFORM_COLORS + 1]
+
+	local model = Instance.new("Model")
+	model.Name = "Plot" .. index
+	model:SetAttribute("Index", index)
+	model.Parent = plotsFolder
+
+	local function mk(props: { [string]: any }, localCF: CFrame): Part
+		local p = Instance.new("Part")
+		p.Anchored = true
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
+		for key, v in props do
+			(p :: any)[key] = v
+		end
+		p.CFrame = cf * localCF
+		p.Parent = model
+		return p
+	end
+
+	local plot: any = {
+		index = index,
+		cf = cf,
+		model = model,
+		owner = nil,
+		pads = {},
+		padLabels = {},
+		padPrompts = {},
+		models = {},
+		stealPrompts = {},
+		lockedUntil = 0,
+		lockToken = 0,
+	}
+
+	-- platform
+	mk({ Name = "Platform", Size = PLATFORM, Color = color, Material = Enum.Material.SmoothPlastic }, CFrame.new(0, PLATFORM.Y / 2, 0))
+	mk({ Name = "Trim", Size = Vector3.new(PLATFORM.X + 1, 1, PLATFORM.Z + 1), Color = Color3.fromRGB(255, 255, 255), Material = Enum.Material.Neon, Transparency = 0.2 }, CFrame.new(0, PLATFORM.Y - 0.2, 0))
+	mk({ Name = "Floor", Size = Vector3.new(PLATFORM.X - 2, 0.2, PLATFORM.Z - 2), Color = Color3.fromRGB(245, 245, 250), Material = Enum.Material.Marble }, CFrame.new(0, PLATFORM.Y + 0.05, 0))
+
+	-- ramp down to the plaza
+	local half = PLATFORM.X / 2
+	local run = M.RAMP_RUN
+	local ang = math.atan2(PLATFORM.Y, run)
+	local len = math.sqrt(PLATFORM.Y ^ 2 + run ^ 2)
+	mk(
+		{ Name = "Ramp", Size = Vector3.new(len, 1, M.RAMP_WIDTH), Color = Color3.fromRGB(235, 235, 245), Material = Enum.Material.Concrete },
+		CFrame.new(half + run / 2 - 0.2, PLATFORM.Y / 2 - 0.45, 0) * CFrame.Angles(0, 0, -ang)
+	)
+	for _, sz in { -1, 1 } do
+		mk(
+			{ Name = "RampRail", Size = Vector3.new(len, 0.5, 0.6), Color = Color3.fromRGB(255, 255, 255), Material = Enum.Material.Neon, Transparency = 0.3 },
+			CFrame.new(half + run / 2 - 0.2, PLATFORM.Y / 2 + 0.15, sz * (M.RAMP_WIDTH / 2)) * CFrame.Angles(0, 0, -ang)
+		)
+	end
+
+	-- invisible walls so nobody falls off by accident
+	local wallH = 14
+	local function wall(size: Vector3, lcf: CFrame)
+		mk({ Name = "Wall", Size = size, Transparency = 1, CanQuery = false, CanTouch = false }, lcf)
+	end
+	local wy = PLATFORM.Y + wallH / 2
+	wall(Vector3.new(1, wallH, PLATFORM.Z + 2), CFrame.new(-half - 0.5, wy, 0))
+	wall(Vector3.new(PLATFORM.X + 2, wallH, 1), CFrame.new(0, wy, PLATFORM.Z / 2 + 0.5))
+	wall(Vector3.new(PLATFORM.X + 2, wallH, 1), CFrame.new(0, wy, -PLATFORM.Z / 2 - 0.5))
+	local sideLen = (PLATFORM.Z - M.RAMP_WIDTH) / 2
+	for _, sz in { -1, 1 } do
+		wall(Vector3.new(1, wallH, sideLen), CFrame.new(half + 0.5, wy, sz * (M.RAMP_WIDTH / 2 + sideLen / 2)))
+	end
+
+	-- spawn
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "Spawn"
+	spawn.Size = Vector3.new(6, 1, 6)
+	spawn.Anchored = true
+	spawn.Neutral = true
+	spawn.Duration = 0
+	spawn.Transparency = 1
+	spawn.CanCollide = false
+	spawn.CanQuery = false
+	spawn.CFrame = cf * CFrame.new(-half + 4, PLATFORM.Y + 0.6, 0) * CFrame.Angles(0, math.rad(-90), 0)
+	spawn.Parent = model
+	plot.spawn = spawn
+
+	-- pads
+	for slot = 1, Config.MAX_SLOTS do
+		local lcf = padLocalCF(slot)
+		local pad = mk({ Name = "Pad" .. slot, Size = Vector3.new(7, 0.6, 7), Color = Color3.fromRGB(60, 190, 170), Material = Enum.Material.SmoothPlastic }, lcf)
+		pad:SetAttribute("Slot", slot)
+		plot.pads[slot] = pad
+
+		local gui = Instance.new("BillboardGui")
+		gui.Name = "PadLabel"
+		gui.Size = UDim2.fromOffset(130, 38)
+		gui.StudsOffsetWorldSpace = cf.XVector * 4.3 + Vector3.new(0, 1.2, 0)
+		gui.MaxDistance = 48
+		gui.LightInfluence = 0
+		gui.Adornee = pad
+		gui.Parent = pad
+		local lbl = Instance.new("TextLabel")
+		lbl.Name = "Text"
+		lbl.Size = UDim2.fromScale(1, 1)
+		lbl.BackgroundTransparency = 1
+		lbl.TextScaled = true
+		lbl.Font = Enum.Font.FredokaOne
+		lbl.TextStrokeTransparency = 0
+		lbl.Text = ""
+		lbl.Parent = gui
+		plot.padLabels[slot] = lbl
+	end
+
+	-- lock console + siren
+	local console = mk({ Name = "Console", Size = Vector3.new(3, 3, 3), Color = Color3.fromRGB(40, 45, 70), Material = Enum.Material.Metal }, CFrame.new(half - 2.5, PLATFORM.Y + 1.5, -11))
+	local siren = mk({ Name = "Siren", Shape = Enum.PartType.Ball, Size = Vector3.new(1.6, 1.6, 1.6), Color = Color3.fromRGB(80, 255, 140), Material = Enum.Material.Neon }, CFrame.new(half - 2.5, PLATFORM.Y + 3.6, -11))
+	plot.siren = siren
+	local lockPrompt = Instance.new("ProximityPrompt")
+	lockPrompt.ActionText = "Lock Base"
+	lockPrompt.ObjectText = "Anti-Thief Lasers"
+	lockPrompt.HoldDuration = 0.4
+	lockPrompt.MaxActivationDistance = 10
+	lockPrompt.RequiresLineOfSight = false
+	lockPrompt:SetAttribute("OwnerOnly", 0)
+	lockPrompt.Parent = console
+	plot.lockPrompt = lockPrompt
+	lockPrompt.Triggered:Connect(function(player)
+		local ps = State.get(player)
+		if ps and plot.owner == player then
+			Plot.UseLock(ps)
+		end
+	end)
+
+	-- lock cage (visual only)
+	plot.cage = mk(
+		{ Name = "Cage", Size = Vector3.new(PLATFORM.X, 26, PLATFORM.Z), Color = Color3.fromRGB(255, 60, 90), Material = Enum.Material.ForceField, Transparency = 1, CanCollide = false, CanQuery = false, CanTouch = false },
+		CFrame.new(0, PLATFORM.Y + 13, 0)
+	)
+
+	-- big overhead sign
+	local anchor = mk({ Name = "SignAnchor", Size = Vector3.one, Transparency = 1, CanCollide = false, CanQuery = false, CanTouch = false }, CFrame.new(0, PLATFORM.Y + 24, 0))
+	plot.signAnchor = anchor
+	plot.sign = Tags.simple(anchor, anchor, "Empty Base", "Claim me!", Vector3.zero, Vector2.new(360, 120), 520)
+
+	local gooberFolder = Instance.new("Folder")
+	gooberFolder.Name = "Goobers"
+	gooberFolder.Parent = model
+	plot.gooberFolder = gooberFolder
+
+	return plot
+end
+
+function Plot.Init(services: any)
+	S = services
+	plotsFolder = Instance.new("Folder")
+	plotsFolder.Name = "Plots"
+	plotsFolder.Parent = workspace
+
+	for i = 1, Config.MAX_PLAYERS do
+		Plot.plots[i] = buildPlot(i)
+	end
+
+	-- standing on a pad collects its stash
+	task.spawn(function()
+		while true do
+			task.wait(0.4)
+			for _, ps in State.list() do
+				local plot = ps.plot
+				local char = ps.player.Character
+				local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+				if plot and hrp then
+					for slot, e in ps.slots do
+						local pad = plot.pads[slot]
+						if pad and (e.stash or 0) >= 1 and not e.inTransit then
+							local d = pad.Position - hrp.Position
+							if math.abs(d.X) < 5 and math.abs(d.Z) < 5 and math.abs(d.Y) < 9 then
+								S.Economy.Collect(ps, slot)
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- Ownership
+----------------------------------------------------------------------
+function Plot.Assign(ps: any)
+	local best
+	for _, p in Plot.plots do
+		if not p.owner then
+			best = p
+			break
+		end
+	end
+	if not best then
+		return false
+	end
+	best.owner = ps.player
+	best.model:SetAttribute("OwnerId", ps.player.UserId)
+	best.lockPrompt:SetAttribute("OwnerOnly", ps.player.UserId)
+	ps.plot = best
+	ps.player.RespawnLocation = best.spawn
+	Plot.UpdateSign(ps, true)
+	return true
+end
+
+function Plot.Release(ps: any)
+	local plot = ps.plot
+	if not plot then
+		return
+	end
+	plot.lockToken += 1
+	plot.lockedUntil = 0
+	plot.cage.Transparency = 1
+	for slot in plot.models do
+		Plot.ClearModel(plot, slot)
+	end
+	for slot = 1, Config.MAX_SLOTS do
+		plot.padLabels[slot].Text = ""
+		plot.pads[slot].Color = Color3.fromRGB(60, 190, 170)
+		if plot.padPrompts[slot] then
+			plot.padPrompts[slot]:Destroy()
+			plot.padPrompts[slot] = nil
+		end
+	end
+	plot.owner = nil
+	plot.model:SetAttribute("OwnerId", nil)
+	plot.lockPrompt:SetAttribute("OwnerOnly", 0)
+	plot.sign.Title.Text = "Empty Base"
+	plot.sign.Sub.Text = "Claim me!"
+	plot.lastSign = nil
+	ps.plot = nil
+end
+
+----------------------------------------------------------------------
+-- Sign
+----------------------------------------------------------------------
+function Plot.UpdateSign(ps: any, force: boolean?)
+	local plot = ps.plot
+	if not plot then
+		return
+	end
+	local title = ps.player.DisplayName .. "'s Base"
+	if ps.passes.VIP then
+		title = "[VIP] " .. title
+	end
+	local sub = Util.money(S.Economy.totalCps(ps)) .. "/s"
+	if ps.data.rebirths > 0 then
+		sub ..= "  |  R" .. ps.data.rebirths
+	end
+	local key = title .. sub
+	if plot.lastSign ~= key or force then
+		plot.lastSign = key
+		plot.sign.Title.Text = title
+		plot.sign.Sub.Text = sub
+	end
+end
+
+----------------------------------------------------------------------
+-- Pads
+----------------------------------------------------------------------
+function Plot.UpdatePad(ps: any, slot: number)
+	local plot = ps.plot
+	if not plot then
+		return
+	end
+	local lbl = plot.padLabels[slot]
+	local pad = plot.pads[slot]
+	local unlocked = S.Economy.slotsUnlocked(ps)
+	local e = ps.slots[slot]
+	if slot > unlocked then
+		pad.Color = Color3.fromRGB(50, 55, 72)
+		if slot == unlocked + 1 and unlocked < Config.MAX_SLOTS then
+			lbl.Text = "UNLOCK " .. Util.money(Config.slotUpgradeCost(ps.data.slotUpgrades))
+			lbl.TextColor3 = Color3.fromRGB(255, 210, 90)
+		else
+			lbl.Text = "LOCKED"
+			lbl.TextColor3 = Color3.fromRGB(140, 145, 165)
+		end
+	elseif e and not e.inTransit then
+		pad.Color = Color3.fromRGB(60, 190, 170)
+		local stash = math.floor(e.stash or 0)
+		lbl.Text = Util.money(stash)
+		lbl.TextColor3 = if stash > 0 then Color3.fromRGB(110, 255, 130) else Color3.fromRGB(190, 200, 205)
+	elseif e and e.inTransit then
+		pad.Color = Color3.fromRGB(190, 60, 80)
+		lbl.Text = "STOLEN!"
+		lbl.TextColor3 = Color3.fromRGB(255, 90, 110)
+	else
+		pad.Color = Color3.fromRGB(95, 120, 135)
+		lbl.Text = "EMPTY"
+		lbl.TextColor3 = Color3.fromRGB(170, 185, 195)
+	end
+
+	-- the first locked pad carries the "unlock slot" prompt
+	local wantPrompt = slot == unlocked + 1 and unlocked < Config.MAX_SLOTS
+	local pr = plot.padPrompts[slot]
+	if wantPrompt and not pr then
+		pr = Instance.new("ProximityPrompt")
+		pr.ActionText = "Unlock Slot"
+		pr.HoldDuration = 0.5
+		pr.MaxActivationDistance = 9
+		pr.RequiresLineOfSight = false
+		pr:SetAttribute("OwnerOnly", ps.player.UserId)
+		pr.Parent = pad
+		plot.padPrompts[slot] = pr
+		pr.Triggered:Connect(function(player)
+			local p2 = State.get(player)
+			if p2 and plot.owner == player then
+				S.Economy.UpgradeSlot(p2)
+			end
+		end)
+	elseif not wantPrompt and pr then
+		pr:Destroy()
+		plot.padPrompts[slot] = nil
+	end
+	if pr then
+		pr.ObjectText = Util.money(Config.slotUpgradeCost(ps.data.slotUpgrades))
+	end
+end
+
+function Plot.RefreshAllPads(ps: any)
+	for slot = 1, Config.MAX_SLOTS do
+		Plot.UpdatePad(ps, slot)
+	end
+	S.Data.MarkDirty(ps)
+end
+
+function Plot.PopCash(ps: any, slot: number, amount: number)
+	local plot = ps.plot
+	if not plot then
+		return
+	end
+	local pad = plot.pads[slot]
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromOffset(160, 40)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3, 0)
+	gui.AlwaysOnTop = true
+	gui.Adornee = pad
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.Text = "+" .. Util.money(amount)
+	t.TextColor3 = Color3.fromRGB(120, 255, 140)
+	t.Font = Enum.Font.FredokaOne
+	t.TextScaled = true
+	t.TextStrokeTransparency = 0
+	t.Parent = gui
+	gui.Parent = pad
+	TweenService:Create(gui, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { StudsOffsetWorldSpace = Vector3.new(0, 9, 0) }):Play()
+	TweenService:Create(t, TweenInfo.new(0.9), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+	Debris:AddItem(gui, 1)
+end
+
+----------------------------------------------------------------------
+-- Goober models
+----------------------------------------------------------------------
+function Plot.ClearModel(plot: any, slot: number)
+	local m = plot.models[slot]
+	if m then
+		m:Destroy()
+		plot.models[slot] = nil
+		plot.stealPrompts[slot] = nil
+	end
+end
+
+function Plot.RefreshSlot(ps: any, slot: number)
+	local plot = ps.plot
+	if not plot then
+		return
+	end
+	Plot.ClearModel(plot, slot)
+	Plot.UpdatePad(ps, slot)
+	local e = ps.slots[slot]
+	if not e or e.inTransit then
+		return
+	end
+	local def = Config.CreatureById[e.id]
+	if not def then
+		return
+	end
+	local model = Factory.build(def, e.mut)
+	local pad = plot.pads[slot]
+	local top = pad.Position + Vector3.new(0, pad.Size.Y / 2, 0)
+	local off = model:GetAttribute("GroundOffset") or 2
+	local pos = top + Vector3.new(0, off + 0.1, 0)
+	model:PivotTo(CFrame.lookAt(pos, pos + plot.cf.XVector))
+	local body = model.PrimaryPart :: BasePart
+	body:SetAttribute("Base", body.CFrame)
+	model:SetAttribute("Slot", slot)
+	model.Parent = plot.gooberFolder
+	CollectionService:AddTag(model, "PlotGoober")
+	plot.models[slot] = model
+
+	Tags.goober(body, def, e.mut, false)
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "STEAL"
+	prompt.ObjectText = (if e.mut ~= "Normal" then e.mut .. " " else "") .. def.name
+	prompt.HoldDuration = Config.STEAL_HOLD
+	prompt.MaxActivationDistance = 9
+	prompt.RequiresLineOfSight = false
+	prompt.Enabled = workspace:GetServerTimeNow() >= plot.lockedUntil
+	prompt:SetAttribute("HideFromOwner", ps.player.UserId)
+	prompt.Parent = body
+	plot.stealPrompts[slot] = prompt
+	prompt.Triggered:Connect(function(thief)
+		S.Steal.TryStart(thief, plot, slot)
+	end)
+end
+
+-- Put a brand new goober into a slot (buying, rewards, beach grabs...).
+function Plot.PlaceNew(ps: any, slot: number, id: string, mut: string)
+	ps.slots[slot] = { id = id, mut = mut, stash = 0 }
+	ps.data.discovered[id] = true
+	ps.data.discoveredMut[mut] = true
+	Plot.RefreshSlot(ps, slot)
+	S.Data.MarkDirty(ps)
+end
+
+function Plot.RebuildAll(ps: any)
+	local plot = ps.plot
+	if not plot then
+		return
+	end
+	for slot = 1, Config.MAX_SLOTS do
+		Plot.RefreshSlot(ps, slot)
+	end
+	Plot.UpdateSign(ps, true)
+	S.Data.MarkDirty(ps)
+end
+
+----------------------------------------------------------------------
+-- Base lock
+----------------------------------------------------------------------
+local function setLocked(plot: any, locked: boolean)
+	plot.cage.Transparency = if locked then 0.75 else 1
+	plot.siren.Color = if locked then Color3.fromRGB(255, 70, 90) else Color3.fromRGB(80, 255, 140)
+	for _, pr in plot.stealPrompts do
+		pr.Enabled = not locked
+	end
+end
+
+function Plot.UseLock(ps: any, ignoreCooldown: boolean?): boolean
+	local plot = ps.plot
+	if not plot then
+		return false
+	end
+	local now = workspace:GetServerTimeNow()
+	if now < plot.lockedUntil then
+		S.Data.Notify(ps.player, "Your base is already locked!", "info")
+		return false
+	end
+	if not ignoreCooldown and now < (ps.lockReadyAt or 0) then
+		S.Data.Notify(ps.player, "Lasers recharging: " .. Util.formatTime((ps.lockReadyAt or 0) - now), "error")
+		return false
+	end
+	local dur = S.Economy.lockDuration(ps)
+	plot.lockToken += 1
+	local token = plot.lockToken
+	plot.lockedUntil = now + dur
+	ps.lockReadyAt = plot.lockedUntil + Config.LOCK_COOLDOWN
+	setLocked(plot, true)
+	S.Data.Notify(ps.player, "Base locked for " .. dur .. "s!", "good")
+	Net.get("Sfx"):FireClient(ps.player, "alarm")
+	S.Data.MarkDirty(ps)
+	task.delay(dur, function()
+		if plot.lockToken == token then
+			plot.lockedUntil = 0
+			setLocked(plot, false)
+			if ps.player.Parent then
+				S.Data.Notify(ps.player, "Base lock ended", "info")
+				S.Data.MarkDirty(ps)
+			end
+		end
+	end)
+	return true
+end
+
+-- Flash the siren (used when a thief starts stealing).
+function Plot.Alarm(plot: any)
+	task.spawn(function()
+		for i = 1, 10 do
+			plot.siren.Color = if i % 2 == 0 then Color3.fromRGB(255, 40, 60) else Color3.fromRGB(255, 255, 255)
+			task.wait(0.25)
+		end
+		plot.siren.Color = if workspace:GetServerTimeNow() < plot.lockedUntil then Color3.fromRGB(255, 70, 90) else Color3.fromRGB(80, 255, 140)
+	end)
+end
+
+----------------------------------------------------------------------
+-- Queries
+----------------------------------------------------------------------
+function Plot.ContainsPosition(plot: any, pos: Vector3): boolean
+	local lp = plot.cf:PointToObjectSpace(pos)
+	return math.abs(lp.X) <= PLATFORM.X / 2 and math.abs(lp.Z) <= PLATFORM.Z / 2 and lp.Y > PLATFORM.Y - 3
+end
+
+function Plot.OfOwner(player: Player)
+	local ps = State.get(player)
+	return ps and ps.plot
+end
+
+return Plot
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="20">
+          <Properties>
+            <string name="Name">Rewards</string>
+            <string name="Source"><![CDATA[-- Daily streak, lucky spin, playtime gifts and promo codes.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local State = require(script.Parent.State)
+
+local Rewards = {}
+local S: any
+
+local function limited(ps: any, key: string, gap: number): boolean
+	local now = os.clock()
+	if ps.rl[key] and now - ps.rl[key] < gap then
+		return true
+	end
+	ps.rl[key] = now
+	return false
+end
+
+-- Server-wide luck. Higher multipliers override lower ones, equal ones stack time.
+function Rewards.ApplyServerLuck(mult: number, minutes: number, byName: string?)
+	local now = workspace:GetServerTimeNow()
+	local L = State.luck
+	if now >= L.endsAt or mult > L.mult then
+		L.mult = mult
+		L.endsAt = now + minutes * 60
+	elseif mult == L.mult then
+		L.endsAt = math.min(L.endsAt + minutes * 60, now + 3600)
+	end
+	if byName then
+		Net.get("Announce"):FireAllClients(byName .. " boosted SERVER LUCK to x" .. L.mult .. "!", Color3.fromRGB(120, 255, 160))
+	end
+	for _, ps in State.list() do
+		S.Data.MarkDirty(ps)
+	end
+end
+
+function Rewards.Init(services: any)
+	S = services
+
+	Net.get("ClaimDaily").OnServerEvent:Connect(function(player)
+		local ps = State.get(player)
+		if not ps or limited(ps, "daily", 0.5) then
+			return
+		end
+		local d = ps.data.daily
+		local today = os.time() // 86400
+		if d.lastDay >= today then
+			S.Data.Notify(player, "Already claimed today. Come back tomorrow!", "info")
+			return
+		end
+		local streak = if d.lastDay == today - 1 then d.streak + 1 else 1
+		local idx = (streak - 1) % #Config.DAILY + 1
+		local desc = S.Economy.GrantReward(ps, Config.DAILY[idx])
+		if not desc then
+			S.Data.Notify(player, "Free up a slot to claim today's goober!", "error")
+			return
+		end
+		d.lastDay = today
+		d.streak = streak
+		S.Data.Notify(player, "Day " .. idx .. " reward: " .. desc, "good")
+		Net.get("Sfx"):FireClient(player, "reveal")
+		S.Data.MarkDirty(ps)
+	end)
+
+	Net.get("DoSpin").OnServerEvent:Connect(function(player)
+		local ps = State.get(player)
+		if not ps or limited(ps, "spin", 0.5) then
+			return
+		end
+		local now = os.time()
+		if now - ps.data.spin.last < Config.SPIN_COOLDOWN then
+			S.Data.Notify(player, "Next free spin in " .. Util.formatTime(Config.SPIN_COOLDOWN - (now - ps.data.spin.last)), "info")
+			return
+		end
+		local weights = Config.SPIN
+		local prize = Util.weightedPick(weights, function(r)
+			return r.weight
+		end)
+		local index = table.find(weights, prize) or 1
+		local desc = S.Economy.GrantReward(ps, prize)
+		if not desc then
+			-- no free slot for a goober prize: pay out cash instead
+			desc = S.Economy.GrantReward(ps, { kind = "cash", minutes = 15, floor = 10000 })
+		end
+		ps.data.spin.last = now
+		Net.get("SpinResult"):FireClient(player, index, desc)
+		S.Data.MarkDirty(ps)
+	end)
+
+	Net.get("ClaimGift").OnServerEvent:Connect(function(player, index)
+		local ps = State.get(player)
+		if not ps or type(index) ~= "number" or limited(ps, "gift", 0.3) then
+			return
+		end
+		local g = Config.GIFTS[index]
+		if not g or ps.claimedGifts[index] or ps.playSeconds < g.at then
+			return
+		end
+		local desc = S.Economy.GrantReward(ps, g)
+		if not desc then
+			S.Data.Notify(player, "Free up a slot to claim this gift!", "error")
+			return
+		end
+		ps.claimedGifts[index] = true
+		S.Data.Notify(player, "Gift: " .. desc, "good")
+		Net.get("Sfx"):FireClient(player, "reveal")
+		S.Data.MarkDirty(ps)
+	end)
+
+	Net.get("Redeem").OnServerEvent:Connect(function(player, code)
+		local ps = State.get(player)
+		if not ps or type(code) ~= "string" or limited(ps, "code", 1) then
+			return
+		end
+		code = string.upper((string.gsub(code, "%s+", "")))
+		local reward = Config.CODES[code]
+		if not reward then
+			S.Data.Notify(player, "Invalid code", "error")
+			return
+		end
+		if ps.data.codes[code] then
+			S.Data.Notify(player, "You already used that code", "error")
+			return
+		end
+		local desc = S.Economy.GrantReward(ps, reward)
+		if not desc then
+			S.Data.Notify(player, "Free up a slot and try again!", "error")
+			return
+		end
+		ps.data.codes[code] = true
+		S.Data.Notify(player, "Code redeemed: " .. desc, "good")
+		Net.get("Sfx"):FireClient(player, "reveal")
+		S.Data.MarkDirty(ps)
+	end)
+
+	-- Plain UI actions
+	Net.get("Rebirth").OnServerEvent:Connect(function(player)
+		local ps = State.get(player)
+		if ps and not limited(ps, "rebirth", 1) then
+			S.Economy.Rebirth(ps)
+		end
+	end)
+	Net.get("UseLock").OnServerEvent:Connect(function(player)
+		local ps = State.get(player)
+		if ps and not limited(ps, "lock", 0.5) then
+			S.Plot.UseLock(ps)
+		end
+	end)
+	Net.get("CollectAll").OnServerEvent:Connect(function(player)
+		local ps = State.get(player)
+		if not ps or limited(ps, "collectall", 0.5) then
+			return
+		end
+		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if ps.plot and hrp and S.Plot.ContainsPosition(ps.plot, hrp.Position) then
+			S.Economy.CollectAll(ps)
+		else
+			S.Data.Notify(player, "Go to your base to collect!", "info")
+		end
+	end)
+	Net.get("UpgradeSlot").OnServerEvent:Connect(function(player)
+		local ps = State.get(player)
+		if ps and not limited(ps, "upgrade", 0.5) then
+			S.Economy.UpgradeSlot(ps)
+		end
+	end)
+end
+
+return Rewards
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="21">
+          <Properties>
+            <string name="Name">Slap</string>
+            <string name="Source"><![CDATA[-- The Slap Glove: every player gets one. Hit a thief to make them drop the goober
+-- (it flies back to its owner). Hitting anyone else just shoves them a little.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Debris = game:GetService("Debris")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local State = require(script.Parent.State)
+
+local Slap = {}
+local S: any
+
+function Slap.Init(services: any)
+	S = services
+end
+
+local function popText(char: Model, text: string)
+	local head = char:FindFirstChild("Head")
+	if not head then
+		return
+	end
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromOffset(180, 60)
+	gui.StudsOffset = Vector3.new(0, 3, 0)
+	gui.AlwaysOnTop = true
+	gui.Adornee = head
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.Text = text
+	t.TextColor3 = Color3.fromRGB(255, 230, 80)
+	t.Font = Enum.Font.FredokaOne
+	t.TextScaled = true
+	t.TextStrokeTransparency = 0
+	t.Parent = gui
+	gui.Parent = head
+	Debris:AddItem(gui, 0.8)
+end
+
+local function swing(player: Player)
+	local ps = State.get(player)
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not ps or not hrp or not hum or hum.Health <= 0 then
+		return
+	end
+	if ps.rl.slap and os.clock() - ps.rl.slap < Config.SLAP_COOLDOWN then
+		return
+	end
+	ps.rl.slap = os.clock()
+
+	local best: any, bestDist = nil, Config.SLAP_RANGE
+	for _, other in State.list() do
+		if other.player ~= player then
+			local oc = other.player.Character
+			local ohrp = oc and oc:FindFirstChild("HumanoidRootPart") :: BasePart?
+			local ohum = oc and oc:FindFirstChildOfClass("Humanoid")
+			if ohrp and ohum and ohum.Health > 0 then
+				local delta = ohrp.Position - hrp.Position
+				local dist = delta.Magnitude
+				if dist < bestDist and (dist < 3 or hrp.CFrame.LookVector:Dot(delta.Unit) > 0.1) then
+					best, bestDist = other, dist
+				end
+			end
+		end
+	end
+	if not best then
+		return
+	end
+
+	local ohrp = best.player.Character.HumanoidRootPart :: BasePart
+	local dir = (ohrp.Position - hrp.Position) * Vector3.new(1, 0, 1)
+	dir = if dir.Magnitude > 0.01 then dir.Unit else hrp.CFrame.LookVector
+	local carrying = best.carry ~= nil
+	local power = if carrying then 70 else 28
+	Net.get("Knock"):FireClient(best.player, dir * power + Vector3.new(0, if carrying then 38 else 18, 0))
+	Net.get("Sfx"):FireClient(player, "slap")
+	Net.get("Sfx"):FireClient(best.player, "slap")
+	popText(best.player.Character, if carrying then "SLAPPED!" else "BONK!")
+
+	if carrying then
+		local carry = best.carry
+		local isOwnerDefending = carry.owner == player
+		S.Steal.Return(best, "You got slapped and dropped it!")
+		if isOwnerDefending then
+			local reward = S.Economy.totalCps(ps) * 60 * Config.DEFEND_REWARD_MINUTES
+			reward = math.max(reward, 500)
+			S.Economy.addCash(ps, reward, true)
+			ps.data.stats.defends += 1
+			S.Data.Notify(player, "DEFENDED! +" .. Util.money(reward), "good")
+		else
+			S.Data.Notify(player, "Nice slap! Goober returned to " .. carry.owner.DisplayName, "good")
+		end
+	end
+end
+
+function Slap.Give(player: Player)
+	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 5)
+	if not backpack or backpack:FindFirstChild("Slap Glove") then
+		return
+	end
+	local tool = Instance.new("Tool")
+	tool.Name = "Slap Glove"
+	tool.ToolTip = "Click to slap thieves!"
+	tool.CanBeDropped = false
+	tool.RequiresHandle = true
+	tool.Grip = CFrame.new(0, 0, -0.4)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(1.3, 1.3, 2)
+	handle.Color = Color3.fromRGB(255, 205, 50)
+	handle.Material = Enum.Material.SmoothPlastic
+	handle.CanCollide = false
+	handle.Massless = true
+	handle.Parent = tool
+
+	local cuff = Instance.new("Part")
+	cuff.Size = Vector3.new(1.5, 1.5, 0.6)
+	cuff.Color = Color3.fromRGB(255, 80, 120)
+	cuff.Material = Enum.Material.Neon
+	cuff.CanCollide = false
+	cuff.Massless = true
+	cuff.CFrame = handle.CFrame * CFrame.new(0, 0, 1.1)
+	cuff.Parent = tool
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = handle
+	w.Part1 = cuff
+	w.Parent = cuff
+
+	tool.Activated:Connect(function()
+		swing(player)
+	end)
+	tool.Parent = backpack
+end
+
+return Slap
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="22">
+          <Properties>
+            <string name="Name">State</string>
+            <string name="Source"><![CDATA[-- Shared runtime state for the server (player states + server-wide buffs).
+
+local State = {}
+
+-- [Player] = ps  (see Data.LoadPlayer for the shape)
+State.byPlayer = {}
+
+-- Server wide luck, bought/earned by anyone and shared with everybody.
+State.luck = { mult = 1, endsAt = 0 }
+
+function State.get(player: Player)
+	return State.byPlayer[player]
+end
+
+function State.list()
+	local out = {}
+	for _, ps in State.byPlayer do
+		table.insert(out, ps)
+	end
+	return out
+end
+
+function State.currentLuck(): number
+	if workspace:GetServerTimeNow() < State.luck.endsAt then
+		return State.luck.mult
+	end
+	return 1
+end
+
+return State
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="23">
+          <Properties>
+            <string name="Name">Steal</string>
+            <string name="Source"><![CDATA[-- The steal loop: hold E on a goober in someone else's base, run it back to your own base.
+-- While a goober is "in transit" it stays owned (and saved) by the victim, so a crash or
+-- disconnect can never duplicate or delete it.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local Factory = require(Shared.GooberFactory)
+local State = require(script.Parent.State)
+local Tags = require(script.Parent.Tags)
+
+local Steal = {}
+local S: any
+
+local function hrpOf(player: Player): BasePart?
+	local c = player.Character
+	return c and c:FindFirstChild("HumanoidRootPart") :: BasePart?
+end
+
+local function attachVisual(ps: any, def: any, mut: string)
+	local char = ps.player.Character
+	local hrp = hrpOf(ps.player)
+	if not char or not hrp then
+		return nil
+	end
+	local model = Factory.build(def, mut)
+	model.Name = "CarriedGoober"
+	model:ScaleTo(0.55)
+	local body = model.PrimaryPart :: BasePart
+	model:PivotTo(hrp.CFrame * CFrame.new(0, 3.2 + body.Size.Y * 0.5, 0))
+	Factory.makeLoose(model)
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = hrp
+	w.Part1 = body
+	w.Parent = body
+	model.Parent = char
+
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromOffset(200, 50)
+	gui.StudsOffset = Vector3.new(0, body.Size.Y * 0.5 + 1.8, 0)
+	gui.AlwaysOnTop = true
+	gui.Adornee = body
+	gui.Parent = body
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.Text = "STOLEN! SLAP HIM!"
+	t.TextColor3 = Color3.fromRGB(255, 80, 100)
+	t.Font = Enum.Font.FredokaOne
+	t.TextScaled = true
+	t.TextStrokeTransparency = 0
+	t.Parent = gui
+	return model
+end
+
+function Steal.TryStart(thief: Player, plot: any, slot: number)
+	local tps = State.get(thief)
+	local owner: Player? = plot.owner
+	if not tps or not owner or owner == thief then
+		return
+	end
+	local ops = State.get(owner)
+	if not ops then
+		return
+	end
+	if tps.carry then
+		S.Data.Notify(thief, "You're already carrying a goober!", "error")
+		return
+	end
+	if workspace:GetServerTimeNow() < plot.lockedUntil then
+		S.Data.Notify(thief, "That base is locked!", "error")
+		return
+	end
+	local entry = ops.slots[slot]
+	if not entry or entry.inTransit then
+		return
+	end
+	local model = plot.models[slot]
+	local hrp = hrpOf(thief)
+	local hum = thief.Character and thief.Character:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hum or hum.Health <= 0 or not model or not model.PrimaryPart then
+		return
+	end
+	if (hrp.Position - model.PrimaryPart.Position).Magnitude > 22 then
+		return
+	end
+	if not S.Economy.freeSlot(tps) then
+		S.Data.Notify(thief, "Free up a slot in your base first!", "error")
+		return
+	end
+	local def = Config.CreatureById[entry.id]
+	if not def then
+		return
+	end
+
+	entry.inTransit = true
+	entry.stash = 0
+	S.Plot.RefreshSlot(ops, slot)
+
+	tps.carry = { owner = owner, slot = slot, entry = entry, id = entry.id, mut = entry.mut }
+	tps.carry.visual = attachVisual(tps, def, entry.mut)
+	hum.WalkSpeed = Config.CARRY_WALKSPEED
+
+	local rar = Config.Rarity[def.rarity]
+	Net.get("StealAlert"):FireClient(owner, thief.DisplayName, def.name, def.rarity)
+	S.Plot.Alarm(plot)
+	Net.get("Sfx"):FireClient(owner, "alarm")
+	Net.get("Notify"):FireClient(thief, "Run it back to YOUR base!", "good")
+	if rar.order >= 5 then
+		Net.get("Announce"):FireAllClients(thief.DisplayName .. " is stealing a " .. string.upper(def.rarity) .. " " .. def.name .. " from " .. owner.DisplayName .. "!!", rar.color)
+	end
+	if not tps.data.tutorial.stole then
+		tps.data.tutorial.stole = true
+		S.Analytics.step(thief, 4, "FirstStealAttempt")
+	end
+	S.Data.MarkDirty(tps)
+	S.Data.MarkDirty(ops)
+end
+
+local function clearCarry(tps: any)
+	local carry = tps.carry
+	tps.carry = nil
+	if carry and carry.visual then
+		carry.visual:Destroy()
+	end
+	local char = tps.player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.WalkSpeed = 16
+	end
+	S.Data.MarkDirty(tps)
+	return carry
+end
+
+-- Goober goes back to its owner (slap, death, disconnect...).
+function Steal.Return(tps: any, reason: string?)
+	local carry = clearCarry(tps)
+	if not carry then
+		return
+	end
+	local ops = State.get(carry.owner)
+	if ops and ops.slots[carry.slot] == carry.entry then
+		carry.entry.inTransit = nil
+		S.Plot.RefreshSlot(ops, carry.slot)
+		S.Data.MarkDirty(ops)
+		local def = Config.CreatureById[carry.id]
+		Net.get("Notify"):FireClient(carry.owner, (def and def.name or "Your goober") .. " is back home!", "good")
+	end
+	if reason and tps.player.Parent then
+		Net.get("Notify"):FireClient(tps.player, reason, "error")
+	end
+end
+
+local function deliver(tps: any)
+	local carry = tps.carry
+	if not carry then
+		return
+	end
+	local ops = State.get(carry.owner)
+	if not ops or ops.slots[carry.slot] ~= carry.entry then
+		Steal.Return(tps, "The goober vanished!")
+		return
+	end
+	local free = S.Economy.freeSlot(tps)
+	if not free then
+		if not tps.rl.noSlotMsg or os.clock() - tps.rl.noSlotMsg > 4 then
+			tps.rl.noSlotMsg = os.clock()
+			S.Data.Notify(tps.player, "No free slot! Make room to bank your loot!", "error")
+		end
+		return
+	end
+	local def = Config.CreatureById[carry.id]
+	local mut = carry.mut
+	clearCarry(tps)
+
+	ops.slots[carry.slot] = nil
+	ops.data.stats.stolen += 1
+	S.Plot.RefreshSlot(ops, carry.slot)
+	S.Data.MarkDirty(ops)
+	Net.get("Notify"):FireClient(carry.owner, tps.player.DisplayName .. " got away with your " .. def.name .. "...", "error")
+
+	S.Plot.PlaceNew(tps, free, def.id, mut)
+	tps.data.stats.steals += 1
+	local rar = Config.Rarity[def.rarity]
+	Net.get("Notify"):FireClient(tps.player, "Stolen! " .. def.name .. " is yours now!", "good")
+	Net.get("Sfx"):FireClient(tps.player, "reveal")
+	if rar.order >= 4 then
+		Net.get("Reveal"):FireClient(tps.player, {
+			title = "STOLEN " .. string.upper(def.rarity) .. "!",
+			name = (if mut ~= "Normal" then mut .. " " else "") .. def.name,
+			color = rar.color,
+			rarity = def.rarity,
+			cps = Config.cpsOf(def, mut),
+		})
+	end
+	if rar.order >= 5 then
+		Net.get("Announce"):FireAllClients(tps.player.DisplayName .. " STOLE a " .. string.upper(def.rarity) .. " " .. def.name .. " from " .. carry.owner.DisplayName .. "!!!", rar.color)
+	end
+end
+
+function Steal.OnDied(ps: any)
+	if ps.carry then
+		Steal.Return(ps, "You dropped the goober!")
+	end
+end
+
+function Steal.OnLeaving(ps: any)
+	if ps.carry then
+		Steal.Return(ps, nil)
+	end
+	-- anyone carrying something that belongs to the leaving player loses it (the owner keeps it)
+	for _, other in State.list() do
+		if other ~= ps and other.carry and other.carry.owner == ps.player then
+			Steal.Return(other, "The owner left - goober returned.")
+		end
+	end
+end
+
+function Steal.Init(services: any)
+	S = services
+	task.spawn(function()
+		while true do
+			task.wait(0.2)
+			for _, ps in State.list() do
+				if ps.carry and ps.plot then
+					local hrp = hrpOf(ps.player)
+					if hrp and S.Plot.ContainsPosition(ps.plot, hrp.Position) then
+						deliver(ps)
+					end
+				end
+			end
+		end
+	end)
+end
+
+return Steal
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="24">
+          <Properties>
+            <string name="Name">Tags</string>
+            <string name="Source"><![CDATA[-- Floating name tags (BillboardGuis) built from code.
+
+local Config = require(game:GetService("ReplicatedStorage").Shared.Config)
+local Util = require(game:GetService("ReplicatedStorage").Shared.Util)
+
+local Tags = {}
+
+local function label(parent: Instance, name: string, y: number, h: number, text: string, color: Color3, font: Enum.Font?)
+	local l = Instance.new("TextLabel")
+	l.Name = name
+	l.BackgroundTransparency = 1
+	l.Position = UDim2.fromScale(0, y)
+	l.Size = UDim2.fromScale(1, h)
+	l.Text = text
+	l.TextColor3 = color
+	l.TextScaled = true
+	l.Font = font or Enum.Font.FredokaOne
+	l.TextStrokeTransparency = 0
+	l.TextStrokeColor3 = Color3.new(0, 0, 0)
+	l.Parent = parent
+	return l
+end
+
+-- Tag shown above a goober. showPrice=true on the belt, otherwise shows income.
+function Tags.goober(root: BasePart, def, mutName: string, showPrice: boolean)
+	local rar = Config.Rarity[def.rarity]
+	local mut = Config.Mutations[mutName]
+	local height = (root.Parent :: Model):GetAttribute("Height") or 4
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "Tag"
+	gui.Size = UDim2.fromOffset(230, 104)
+	gui.StudsOffset = Vector3.new(0, height * 0.5 + 2.4, 0)
+	gui.AlwaysOnTop = false
+	gui.MaxDistance = if showPrice then 95 else 60
+	gui.LightInfluence = 0
+	gui.Adornee = root
+	gui.Parent = root
+
+	local lineY = 0
+	label(gui, "Rarity", lineY, 0.22, string.upper(def.rarity), rar.color)
+	lineY += 0.22
+	local nameText = def.name
+	local nameColor = Color3.new(1, 1, 1)
+	if mutName ~= "Normal" then
+		nameText = mutName .. " " .. def.name
+		nameColor = mut.color
+	end
+	label(gui, "Name", lineY, 0.3, nameText, nameColor)
+	lineY += 0.3
+	if showPrice then
+		label(gui, "Price", lineY, 0.26, Util.money(Config.priceOf(def, mutName)), Color3.fromRGB(110, 255, 130))
+		lineY += 0.26
+	end
+	label(gui, "Income", lineY, 0.22, "+" .. Util.money(Config.cpsOf(def, mutName)) .. "/s", Color3.fromRGB(255, 235, 140))
+	return gui
+end
+
+function Tags.simple(parent: Instance, adornee: BasePart, text: string, subText: string?, offset: Vector3, size: Vector2, maxDistance: number)
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "Sign"
+	gui.Size = UDim2.fromOffset(size.X, size.Y)
+	gui.StudsOffset = offset
+	gui.MaxDistance = maxDistance
+	gui.AlwaysOnTop = false
+	gui.LightInfluence = 0
+	gui.Adornee = adornee
+	gui.Parent = parent
+	label(gui, "Title", 0, if subText then 0.6 else 1, text, Color3.new(1, 1, 1))
+	if subText then
+		label(gui, "Sub", 0.6, 0.4, subText, Color3.fromRGB(255, 235, 140))
+	end
+	return gui
+end
+
+return Tags
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="25">
+          <Properties>
+            <string name="Name">Tide</string>
+            <string name="Source"><![CDATA[-- THE TIDE. Every few minutes a siren sounds, the sky turns, and a giant wave sweeps through the
+-- plaza. Anyone caught below the safe height is swept away (and drops any stolen goober).
+-- After the wave: Tide Surge - 2x income, faster belt, Tidal mutations and free washed-up goobers.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
+local Debris = game:GetService("Debris")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local Factory = require(Shared.GooberFactory)
+local State = require(script.Parent.State)
+local Tags = require(script.Parent.Tags)
+
+local Tide = {}
+local S: any
+
+local T = Config.TIDE
+local stateName = "Idle"
+local stateEndsAt = 0
+local surgeUntil = 0
+local forceNow = false
+local beachFolder: Folder
+local flood: Part
+local wave: Part?
+
+function Tide.isSurge(): boolean
+	return workspace:GetServerTimeNow() < surgeUntil
+end
+
+function Tide.TriggerNow()
+	if stateName == "Idle" then
+		forceNow = true
+	end
+end
+
+local function setState(name: string, duration: number)
+	stateName = name
+	stateEndsAt = workspace:GetServerTimeNow() + duration
+	Net.get("TideState"):FireAllClients(name, stateEndsAt)
+end
+
+function Tide.SendTo(player: Player)
+	Net.get("TideState"):FireClient(player, stateName, stateEndsAt)
+end
+
+----------------------------------------------------------------------
+-- Lighting moods
+----------------------------------------------------------------------
+local function mood(name: string, t: number)
+	local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+	local goals: { [string]: any }
+	local atmGoals: { [string]: any }
+	if name == "Warning" then
+		goals = { ClockTime = 18.2, Brightness = 1.4, OutdoorAmbient = Color3.fromRGB(110, 70, 90) }
+		atmGoals = { Color = Color3.fromRGB(190, 110, 110), Density = 0.5, Haze = 2.2 }
+	elseif name == "Surge" then
+		goals = { ClockTime = 16.2, Brightness = 3.2, OutdoorAmbient = Color3.fromRGB(150, 200, 255) }
+		atmGoals = { Color = Color3.fromRGB(190, 225, 255), Density = 0.25, Haze = 0.4 }
+	else
+		goals = { ClockTime = 14.5, Brightness = 2.6, OutdoorAmbient = Color3.fromRGB(140, 170, 190) }
+		atmGoals = { Color = Color3.fromRGB(199, 225, 255), Density = 0.3, Haze = 1.0 }
+	end
+	TweenService:Create(Lighting, TweenInfo.new(t), goals):Play()
+	if atmosphere then
+		TweenService:Create(atmosphere, TweenInfo.new(t), atmGoals):Play()
+	end
+end
+
+----------------------------------------------------------------------
+-- Wave
+----------------------------------------------------------------------
+local function makeWave(): Part
+	local w = Instance.new("Part")
+	w.Name = "TideWave"
+	w.Anchored = true
+	w.CanCollide = false
+	w.CanQuery = false
+	w.CanTouch = false
+	w.Material = Enum.Material.Glass
+	w.Color = Color3.fromRGB(30, 140, 255)
+	w.Transparency = 0.35
+	w.Size = Vector3.new(T.WAVE_HALF_WIDTH * 2, T.WAVE_HEIGHT, T.WAVE_THICKNESS)
+
+	local foam = Instance.new("Part")
+	foam.Name = "Foam"
+	foam.CanCollide = false
+	foam.CanQuery = false
+	foam.CanTouch = false
+	foam.Massless = true
+	foam.Material = Enum.Material.Neon
+	foam.Color = Color3.fromRGB(235, 250, 255)
+	foam.Transparency = 0.15
+	foam.Size = Vector3.new(T.WAVE_HALF_WIDTH * 2, 4, T.WAVE_THICKNESS + 6)
+	foam.CFrame = CFrame.new(0, T.WAVE_HEIGHT / 2, 0)
+	foam.Parent = w
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = w
+	weld.Part1 = foam
+	weld.Parent = foam
+
+	local spray = Instance.new("ParticleEmitter")
+	spray.Rate = 160
+	spray.Lifetime = NumberRange.new(1, 2)
+	spray.Speed = NumberRange.new(10, 22)
+	spray.SpreadAngle = Vector2.new(50, 50)
+	spray.EmissionDirection = Enum.NormalId.Top
+	spray.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 3), NumberSequenceKeypoint.new(1, 0) })
+	spray.Transparency = NumberSequence.new(0.2, 1)
+	spray.LightEmission = 0.5
+	spray.Color = ColorSequence.new(Color3.fromRGB(230, 248, 255))
+	spray.Parent = foam
+	return w
+end
+
+local function sweep(ps: any, wz: number)
+	local player: Player = ps.player
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hum or hum.Health <= 0 then
+		return
+	end
+	if (ps.shieldedUntil or 0) > os.clock() then
+		return
+	end
+	if ps.data.shields > 0 then
+		ps.data.shields -= 1
+		ps.shieldedUntil = os.clock() + 5
+		S.Data.Notify(player, "TIDE SHIELD saved you! (" .. ps.data.shields .. " left)", "good")
+		Net.get("Knock"):FireClient(player, Vector3.new(0, 55, 28))
+		S.Data.MarkDirty(ps)
+		return
+	end
+	ps.swept = true
+	ps.data.stats.tidesSwept += 1
+	Net.get("Knock"):FireClient(player, Vector3.new(0, 70, 95))
+	S.Data.Notify(player, "SWEPT AWAY BY THE TIDE!", "error")
+	task.delay(0.45, function()
+		local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if h and h.Health > 0 then
+			h.Health = 0
+		end
+	end)
+end
+
+local function runWave()
+	local half = Config.MAP.WORLD_HALF - 24
+	local w = makeWave()
+	wave = w
+	local startZ, endZ = -half, half
+	w.CFrame = CFrame.new(0, T.WAVE_HEIGHT / 2, startZ)
+	w.Parent = workspace
+
+	local travel = (endZ - startZ) / T.WAVE_SPEED
+	setState("Wave", travel)
+	for _, ps in State.list() do
+		ps.swept = false
+	end
+	local tween = TweenService:Create(w, TweenInfo.new(travel, Enum.EasingStyle.Linear), { CFrame = CFrame.new(0, T.WAVE_HEIGHT / 2, endZ) })
+	tween:Play()
+	Net.get("Shake"):FireAllClients(0.5, travel)
+
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		local wz = w.Position.Z
+		for _, ps in State.list() do
+			if not ps.swept then
+				local hrp = ps.player.Character and ps.player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+				if hrp then
+					local p = hrp.Position
+					if math.abs(p.X) <= T.WAVE_HALF_WIDTH + 4 and math.abs(p.Z - wz) <= T.WAVE_THICKNESS / 2 + 3 and p.Y < T.SAFE_Y then
+						sweep(ps, wz)
+					end
+				end
+			end
+		end
+	end)
+	tween.Completed:Wait()
+	conn:Disconnect()
+	w:Destroy()
+	wave = nil
+end
+
+----------------------------------------------------------------------
+-- Beach goobers (free, washed up after the wave)
+----------------------------------------------------------------------
+local function grab(player: Player, model: Model, mutName: string, defId: string)
+	if not model.Parent then
+		return
+	end
+	local ps = State.get(player)
+	if not ps then
+		return
+	end
+	local slot = S.Economy.freeSlot(ps)
+	if not slot then
+		S.Data.Notify(player, "No free slot! Make room and grab another!", "error")
+		return
+	end
+	local def = Config.CreatureById[defId]
+	local pos = model.PrimaryPart.Position
+	model:Destroy()
+	S.Belt.Poof(pos + Vector3.new(0, 2, 0), Config.Rarity[def.rarity].color)
+	S.Plot.PlaceNew(ps, slot, defId, mutName)
+	Net.get("Sfx"):FireClient(player, "reveal")
+	local rar = Config.Rarity[def.rarity]
+	S.Data.Notify(player, "Caught a " .. mutName .. " " .. def.name .. "!", "good")
+	if rar.order >= 4 then
+		Net.get("Reveal"):FireClient(player, {
+			title = "WASHED ASHORE!",
+			name = mutName .. " " .. def.name,
+			color = rar.color,
+			rarity = def.rarity,
+			cps = Config.cpsOf(def, mutName),
+		})
+	end
+	if rar.order >= 5 then
+		Net.get("Announce"):FireAllClients(player.DisplayName .. " caught a " .. string.upper(def.rarity) .. " " .. def.name .. " on the beach!!", rar.color)
+	end
+end
+
+local function spawnBeachGoober(def: any, mutName: string, position: Vector3)
+	local model = Factory.build(def, mutName)
+	local off = model:GetAttribute("GroundOffset") or 2
+	model:PivotTo(CFrame.new(position + Vector3.new(0, off + 0.2, 0)) * CFrame.Angles(0, math.random() * math.pi * 2, 0))
+	model.Parent = beachFolder
+	local body = model.PrimaryPart :: BasePart
+	Tags.goober(body, def, mutName, false)
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "GRAB (FREE)"
+	prompt.ObjectText = mutName .. " " .. def.name
+	prompt.HoldDuration = 0.25
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = body
+	prompt.Triggered:Connect(function(player)
+		grab(player, model, mutName, def.id)
+	end)
+	Debris:AddItem(model, T.BEACH_LIFETIME)
+	return model
+end
+
+function Tide.SpawnBeach()
+	local luck = math.max(2, State.currentLuck())
+	for _ = 1, T.BEACH_GOOBERS do
+		local def = S.Belt.rollDef(luck, 1, 6)
+		if def then
+			local pos = Vector3.new(math.random(-70, 70), 0, math.random(-140, 140))
+			spawnBeachGoober(def, "Tidal", pos)
+		end
+	end
+	if math.random() < T.TSUNAMOO_CHANCE or Tide.forceTsunamoo then
+		Tide.forceTsunamoo = false
+		spawnBeachGoober(Config.CreatureById.tsunamoo, "Tidal", Vector3.new(math.random(-30, 30), 0, math.random(-60, 60)))
+		Net.get("Announce"):FireAllClients("THE TSUNAMOO WASHED ASHORE!!! GRAB IT!!!", Config.Rarity.Secret.color)
+		Net.get("Shake"):FireAllClients(0.7, 2.5)
+	end
+end
+
+----------------------------------------------------------------------
+-- Main loop
+----------------------------------------------------------------------
+local function runCycle()
+	-- warning
+	setState("Warning", T.WARNING)
+	mood("Warning", T.WARNING)
+	Net.get("Announce"):FireAllClients("THE TIDE IS COMING! Get to HIGH GROUND!", Color3.fromRGB(255, 90, 90))
+	Net.get("Sfx"):FireAllClients("siren")
+	local warnEnd = os.clock() + T.WARNING
+	while os.clock() < warnEnd do
+		Net.get("Shake"):FireAllClients(0.12, 1)
+		task.wait(1)
+	end
+
+	-- wave
+	runWave()
+
+	-- survivors
+	for _, ps in State.list() do
+		if not ps.swept then
+			ps.data.stats.tidesSurvived += 1
+			local bonus = S.Economy.totalCps(ps) * 60 * T.SURVIVOR_BONUS_MINUTES
+			if bonus >= 1 then
+				S.Economy.addCash(ps, bonus, true)
+				S.Data.Notify(ps.player, "TIDE SURVIVOR! +" .. Util.money(bonus), "good")
+			end
+		end
+	end
+
+	-- surge
+	surgeUntil = workspace:GetServerTimeNow() + T.SURGE_SECONDS
+	State.luck.mult = math.max(State.currentLuck(), T.SURGE_LUCK)
+	State.luck.endsAt = math.max(State.luck.endsAt, surgeUntil)
+	setState("Surge", T.SURGE_SECONDS)
+	mood("Surge", 4)
+	Net.get("Announce"):FireAllClients("TIDE SURGE! 2x income, extra luck & free goobers on the beach!", Color3.fromRGB(80, 220, 255))
+	flood.Transparency = 0.55
+	TweenService:Create(flood, TweenInfo.new(T.SURGE_SECONDS, Enum.EasingStyle.Quad), { Transparency = 1 }):Play()
+	Tide.SpawnBeach()
+	for _, ps in State.list() do
+		S.Data.MarkDirty(ps)
+	end
+	task.wait(T.SURGE_SECONDS)
+end
+
+function Tide.Init(services: any)
+	S = services
+	beachFolder = Instance.new("Folder")
+	beachFolder.Name = "Beach"
+	beachFolder.Parent = workspace
+
+	flood = Instance.new("Part")
+	flood.Name = "Flood"
+	flood.Anchored = true
+	flood.CanCollide = false
+	flood.CanQuery = false
+	flood.CanTouch = false
+	flood.Material = Enum.Material.Glass
+	flood.Color = Color3.fromRGB(60, 170, 255)
+	flood.Transparency = 1
+	flood.Size = Vector3.new(190, 0.4, Config.MAP.BELT_HALF_LENGTH * 2 + 60)
+	flood.Position = Vector3.new(0, 0.3, 0)
+	flood.Parent = workspace
+
+	task.spawn(function()
+		local first = true
+		while true do
+			local wait_ = if RunService:IsStudio() then T.INTERVAL_STUDIO elseif first then T.INTERVAL_FIRST else T.INTERVAL
+			first = false
+			setState("Idle", wait_)
+			mood("Idle", 3)
+			local untilT = os.clock() + wait_
+			while os.clock() < untilT and not forceNow do
+				task.wait(0.5)
+				if #State.list() == 0 then
+					untilT += 0.5 -- the tide never comes for an empty server
+				end
+			end
+			forceNow = false
+			runCycle()
+		end
+	end)
+end
+
+return Tide
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="26">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="27">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="28">
+        <Properties>
+          <string name="Name">GooberTideClient</string>
+        </Properties>
+        <Item class="ModuleScript" referent="29">
+          <Properties>
+            <string name="Name">ClientState</string>
+            <string name="Source"><![CDATA[-- Holds the latest snapshot from the server and notifies listeners.
+
+local Players = game:GetService("Players")
+
+local ClientState = {}
+
+ClientState.data = nil :: any
+ClientState.tide = { state = "Idle", endsAt = 0 }
+
+local listeners: { (any) -> () } = {}
+
+function ClientState.set(snapshot: any)
+	ClientState.data = snapshot
+	for _, f in listeners do
+		task.spawn(f, snapshot)
+	end
+end
+
+function ClientState.onChanged(f: (any) -> ())
+	table.insert(listeners, f)
+	if ClientState.data then
+		task.spawn(f, ClientState.data)
+	end
+end
+
+function ClientState.now(): number
+	return workspace:GetServerTimeNow()
+end
+
+ClientState.player = Players.LocalPlayer
+
+return ClientState
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="30">
+          <Properties>
+            <string name="Name">Effects</string>
+            <string name="Source"><![CDATA[-- Toasts, headline banners, rarity reveals, vignettes, camera shake, sound, knockback.
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Net = require(Shared.Net)
+local UI = require(script.Parent.UI)
+
+local Effects = {}
+local player = Players.LocalPlayer
+local T = UI.Theme
+
+local gui: ScreenGui
+local toastHolder: Frame
+local bannerHolder: Frame
+local overlay: Frame
+
+local KIND_COLORS = { info = T.cyan, good = T.good, error = T.bad }
+
+----------------------------------------------------------------------
+-- Sound
+----------------------------------------------------------------------
+function Effects.sfx(key: string, volume: number?, looped: boolean?, duration: number?)
+	local id = Config.SOUNDS[key]
+	if not id then
+		return
+	end
+	local s = Instance.new("Sound")
+	s.SoundId = id
+	s.Volume = volume or 0.5
+	s.Looped = looped or false
+	s.PlaybackSpeed = 0.95 + math.random() * 0.1
+	s.Parent = SoundService
+	s:Play()
+	Debris:AddItem(s, duration or 6)
+	return s
+end
+
+----------------------------------------------------------------------
+-- Toasts
+----------------------------------------------------------------------
+function Effects.toast(text: string, kind: string?)
+	local color = KIND_COLORS[kind or "info"] or T.cyan
+	local f = UI.make("Frame", {
+		BackgroundColor3 = T.bg,
+		Size = UDim2.fromOffset(420, 40),
+		BackgroundTransparency = 0.1,
+		LayoutOrder = -math.floor(os.clock() * 100),
+		Parent = toastHolder,
+	})
+	UI.corner(f, 10)
+	UI.stroke(f, color, 2)
+	UI.label(f, text, { TextColor3 = color, Size = UDim2.new(1, -16, 1, -8), Position = UDim2.fromOffset(8, 4), Stroke = false })
+	f.Position = UDim2.fromOffset(0, 30)
+	task.delay(3.2, function()
+		if f.Parent then
+			UI.tween(f, 0.3, { BackgroundTransparency = 1 })
+			task.wait(0.3)
+			f:Destroy()
+		end
+	end)
+	local children = toastHolder:GetChildren()
+	local count = 0
+	for _, c in children do
+		if c:IsA("Frame") then
+			count += 1
+		end
+	end
+	if count > 4 then
+		for _, c in children do
+			if c:IsA("Frame") then
+				c:Destroy()
+				break
+			end
+		end
+	end
+end
+
+----------------------------------------------------------------------
+-- Headline banners (server-wide announcements)
+----------------------------------------------------------------------
+local bannerQueue: { { string | Color3 } } = {}
+local bannerBusy = false
+
+local function showNextBanner()
+	if bannerBusy then
+		return
+	end
+	local nextB = table.remove(bannerQueue, 1)
+	if not nextB then
+		return
+	end
+	bannerBusy = true
+	local text, color = nextB[1] :: string, nextB[2] :: Color3
+	local f = UI.make("Frame", { BackgroundColor3 = T.bg, BackgroundTransparency = 0.15, Size = UDim2.new(0, 780, 0, 52), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -70), Parent = bannerHolder })
+	UI.corner(f, 14)
+	UI.stroke(f, color, 3)
+	UI.label(f, text, { TextColor3 = color, Size = UDim2.new(1, -24, 1, -12), Position = UDim2.fromOffset(12, 6) })
+	UI.tween(f, 0.35, { Position = UDim2.new(0.5, 0, 0, 62) }, Enum.EasingStyle.Back)
+	task.delay(4.2, function()
+		UI.tween(f, 0.3, { Position = UDim2.new(0.5, 0, 0, -70) })
+		task.wait(0.35)
+		f:Destroy()
+		bannerBusy = false
+		showNextBanner()
+	end)
+end
+
+function Effects.announce(text: string, color: Color3?)
+	table.insert(bannerQueue, { text, color or T.gold })
+	if #bannerQueue > 4 then
+		table.remove(bannerQueue, 1)
+	end
+	showNextBanner()
+end
+
+----------------------------------------------------------------------
+-- Vignette + flash
+----------------------------------------------------------------------
+local vignette: { Frame } = {}
+
+local function buildVignette()
+	local defs = {
+		{ pos = UDim2.fromScale(0, 0), size = UDim2.fromScale(1, 0.3), rot = 90 },
+		{ pos = UDim2.fromScale(0, 0.7), size = UDim2.fromScale(1, 0.3), rot = 270 },
+		{ pos = UDim2.fromScale(0, 0), size = UDim2.fromScale(0.2, 1), rot = 0 },
+		{ pos = UDim2.fromScale(0.8, 0), size = UDim2.fromScale(0.2, 1), rot = 180 },
+	}
+	for _, d in defs do
+		local f = UI.make("Frame", { BackgroundColor3 = Color3.new(1, 0, 0), BorderSizePixel = 0, Position = d.pos, Size = d.size, BackgroundTransparency = 1, Parent = overlay })
+		UI.make("UIGradient", { Rotation = d.rot, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }), Parent = f })
+		table.insert(vignette, f)
+	end
+end
+
+-- Pulse red/blue edges for `seconds`.
+function Effects.vignette(color: Color3, seconds: number, pulses: number?)
+	for _, f in vignette do
+		f.BackgroundColor3 = color
+	end
+	task.spawn(function()
+		local n = pulses or math.max(1, math.floor(seconds / 0.8))
+		for _ = 1, n do
+			for _, f in vignette do
+				UI.tween(f, 0.35, { BackgroundTransparency = 0.25 })
+			end
+			task.wait(0.4)
+			for _, f in vignette do
+				UI.tween(f, 0.4, { BackgroundTransparency = 1 })
+			end
+			task.wait(seconds / n - 0.4 > 0 and seconds / n - 0.4 or 0.05)
+		end
+	end)
+end
+
+local flash: Frame
+function Effects.flash(color: Color3, strength: number?)
+	flash.BackgroundColor3 = color
+	flash.BackgroundTransparency = 1 - (strength or 0.6)
+	UI.tween(flash, 0.7, { BackgroundTransparency = 1 })
+end
+
+----------------------------------------------------------------------
+-- Reveal popup (Epic+ buys, steals, rebirth)
+----------------------------------------------------------------------
+function Effects.reveal(info: { title: string, name: string, color: Color3, rarity: string, cps: number? })
+	Effects.sfx("reveal", 0.7)
+	Effects.flash(info.color, 0.55)
+	local order = if Config.Rarity[info.rarity] then Config.Rarity[info.rarity].order else 5
+	Effects.shake(0.15 + order * 0.05, 0.5)
+
+	local f = UI.make("Frame", { BackgroundColor3 = T.bg, BackgroundTransparency = 0.1, Size = UDim2.fromOffset(10, 10), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Parent = overlay })
+	UI.corner(f, 24)
+	UI.stroke(f, info.color, 5)
+	local title = UI.label(f, info.title, { TextColor3 = info.color, Size = UDim2.fromScale(0.9, 0.32), Position = UDim2.fromScale(0.05, 0.1) })
+	UI.label(f, info.name, { Size = UDim2.fromScale(0.9, 0.3), Position = UDim2.fromScale(0.05, 0.42) })
+	if info.cps then
+		UI.label(f, "+$" .. require(Shared.Util).formatNumber(info.cps) .. "/s", { TextColor3 = T.good, Size = UDim2.fromScale(0.6, 0.18), Position = UDim2.fromScale(0.2, 0.76) })
+	end
+	title.Rotation = -3
+	UI.tween(f, 0.45, { Size = UDim2.fromOffset(520, 220) }, Enum.EasingStyle.Back)
+	UI.tween(title, 0.9, { Rotation = 3 }, Enum.EasingStyle.Sine)
+	task.delay(2.6, function()
+		UI.tween(f, 0.3, { Size = UDim2.fromOffset(10, 10), BackgroundTransparency = 1 })
+		task.wait(0.32)
+		f:Destroy()
+	end)
+end
+
+----------------------------------------------------------------------
+-- Camera shake
+----------------------------------------------------------------------
+local shakeAmp, shakeUntil = 0, 0
+function Effects.shake(amp: number, duration: number)
+	shakeAmp = math.max(shakeAmp * 0.5, amp)
+	shakeUntil = math.max(shakeUntil, os.clock() + duration)
+end
+
+----------------------------------------------------------------------
+-- Init
+----------------------------------------------------------------------
+function Effects.Init(screenGui: ScreenGui)
+	gui = screenGui
+
+	overlay = UI.make("Frame", { Name = "Overlay", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 50, Parent = gui })
+	flash = UI.make("Frame", { Name = "Flash", BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), ZIndex = 60, Active = false, Parent = gui })
+	buildVignette()
+
+	toastHolder = UI.make("Frame", { Name = "Toasts", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -120), Size = UDim2.fromOffset(440, 220), ZIndex = 40, Parent = gui })
+	UI.make("UIListLayout", { VerticalAlignment = Enum.VerticalAlignment.Bottom, HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6), Parent = toastHolder })
+
+	bannerHolder = UI.make("Frame", { Name = "Banners", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 41, Parent = gui })
+
+	Net.get("Notify").OnClientEvent:Connect(function(text, kind)
+		Effects.toast(text, kind)
+		if kind == "error" then
+			Effects.sfx("click", 0.3)
+		end
+	end)
+	Net.get("Announce").OnClientEvent:Connect(function(text, color)
+		Effects.announce(text, color)
+	end)
+	Net.get("Reveal").OnClientEvent:Connect(function(info)
+		Effects.reveal(info)
+	end)
+	Net.get("Shake").OnClientEvent:Connect(function(amp, dur)
+		Effects.shake(amp, dur)
+	end)
+	Net.get("Sfx").OnClientEvent:Connect(function(key)
+		if key == "siren" then
+			Effects.sfx("siren", 0.8, true, 15)
+		else
+			Effects.sfx(key, 0.5)
+		end
+	end)
+	Net.get("StealAlert").OnClientEvent:Connect(function(thiefName, gooberName, rarity)
+		Effects.vignette(Color3.fromRGB(255, 30, 60), 3.2, 4)
+		Effects.shake(0.3, 0.6)
+		Effects.sfx("alarm", 0.8)
+		Effects.announce(thiefName .. " IS STEALING YOUR " .. string.upper(gooberName) .. "! SLAP THEM!", T.bad)
+	end)
+	Net.get("Knock").OnClientEvent:Connect(function(velocity: Vector3)
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if hrp and hum then
+			hum:ChangeState(Enum.HumanoidStateType.Freefall)
+			hrp.AssemblyLinearVelocity = velocity
+		end
+	end)
+
+	RunService.RenderStepped:Connect(function()
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if not hum then
+			return
+		end
+		if os.clock() < shakeUntil then
+			hum.CameraOffset = Vector3.new((math.random() - 0.5) * shakeAmp * 2, (math.random() - 0.5) * shakeAmp * 2, 0)
+		elseif hum.CameraOffset ~= Vector3.zero then
+			hum.CameraOffset = Vector3.zero
+			shakeAmp = 0
+		end
+	end)
+end
+
+return Effects
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="31">
+          <Properties>
+            <string name="Name">Hud</string>
+            <string name="Source"><![CDATA[-- Always-visible interface: cash, income, tide timer, buffs, menu buttons, tutorial hint.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local UI = require(script.Parent.UI)
+local ClientState = require(script.Parent.ClientState)
+local Effects = require(script.Parent.Effects)
+
+local Hud = {}
+local T = UI.Theme
+
+local widgets: { [string]: any } = {}
+
+local function pill(parent: Instance, size: UDim2, pos: UDim2, anchor: Vector2?, color: Color3?): Frame
+	local f = UI.make("Frame", { BackgroundColor3 = T.bg, BackgroundTransparency = 0.12, Size = size, Position = pos, AnchorPoint = anchor or Vector2.zero, Parent = parent })
+	UI.corner(f, 14)
+	UI.stroke(f, color or T.panel2, 3)
+	return f
+end
+
+function Hud.Init(gui: ScreenGui, panels: any)
+	local root = UI.make("Frame", { Name = "Hud", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = gui })
+	widgets.root = root
+
+	-- CASH (top-left)
+	local cash = pill(root, UDim2.fromOffset(300, 92), UDim2.fromOffset(14, 14), nil, T.good)
+	widgets.cash = UI.label(cash, "$0", { Size = UDim2.new(1, -20, 0, 48), Position = UDim2.fromOffset(10, 6), TextColor3 = T.good, TextXAlignment = Enum.TextXAlignment.Left })
+	widgets.cps = UI.label(cash, "+$0/s", { Size = UDim2.new(0.55, 0, 0, 26), Position = UDim2.fromOffset(10, 58), TextColor3 = T.gold, TextXAlignment = Enum.TextXAlignment.Left })
+	widgets.mult = UI.label(cash, "x1", { Size = UDim2.new(0.4, 0, 0, 26), Position = UDim2.new(0.58, 0, 0, 58), TextColor3 = T.cyan, TextXAlignment = Enum.TextXAlignment.Right })
+
+	-- TIDE TIMER (top-centre)
+	local tide = pill(root, UDim2.fromOffset(380, 50), UDim2.new(0.5, 0, 0, 12), Vector2.new(0.5, 0), T.cyan)
+	widgets.tideFrame = tide
+	widgets.tideStroke = tide:FindFirstChildOfClass("UIStroke")
+	widgets.tide = UI.label(tide, "NEXT TIDE", { Size = UDim2.new(1, -20, 1, -10), Position = UDim2.fromOffset(10, 5) })
+
+	-- BUFFS (top-right)
+	local buffs = UI.make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(250, 120), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14), Parent = root })
+	UI.make("UIListLayout", { Padding = UDim.new(0, 6), HorizontalAlignment = Enum.HorizontalAlignment.Right, Parent = buffs })
+	local luck = pill(buffs, UDim2.fromOffset(250, 36), UDim2.new(), nil, Color3.fromRGB(120, 255, 160))
+	luck.Visible = false
+	widgets.luckFrame = luck
+	widgets.luck = UI.label(luck, "", { Size = UDim2.new(1, -16, 1, -8), Position = UDim2.fromOffset(8, 4), TextColor3 = Color3.fromRGB(120, 255, 160) })
+	local shield = pill(buffs, UDim2.fromOffset(250, 36), UDim2.new(), nil, T.cyan)
+	shield.Visible = false
+	widgets.shieldFrame = shield
+	widgets.shield = UI.label(shield, "", { Size = UDim2.new(1, -16, 1, -8), Position = UDim2.fromOffset(8, 4), TextColor3 = T.cyan })
+	local lock = pill(buffs, UDim2.fromOffset(250, 36), UDim2.new(), nil, T.pink)
+	lock.Visible = false
+	widgets.lockFrame = lock
+	widgets.lockLabel = UI.label(lock, "", { Size = UDim2.new(1, -16, 1, -8), Position = UDim2.fromOffset(8, 4), TextColor3 = T.pink })
+
+	-- LEFT MENU
+	local menu = UI.make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(122, 340), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 14, 0.5, 20), Parent = root })
+	UI.make("UIListLayout", { Padding = UDim.new(0, 8), Parent = menu })
+	local function menuButton(name: string, text: string, color: Color3, order: number)
+		local b = UI.button(menu, text, color, { Size = UDim2.fromOffset(122, 46), LayoutOrder = order }, function()
+			Effects.sfx("click", 0.3)
+			panels.toggle(name)
+		end)
+		widgets["btn_" .. name] = UI.dot(b)
+		return b
+	end
+	menuButton("Shop", "SHOP", T.pink, 1)
+	menuButton("Index", "INDEX", Color3.fromRGB(120, 110, 255), 2)
+	menuButton("Rewards", "REWARDS", T.good, 3)
+	menuButton("Spin", "FREE SPIN", T.gold, 4)
+	menuButton("Codes", "CODES", T.cyan, 5)
+
+	-- ACTION BAR (bottom)
+	local bar = UI.make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(560, 56), AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -14), Parent = root })
+	UI.make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10), HorizontalAlignment = Enum.HorizontalAlignment.Center, Parent = bar })
+	widgets.btnRebirth = UI.button(bar, "REBIRTH", Color3.fromRGB(190, 90, 255), { Size = UDim2.fromOffset(170, 56), LayoutOrder = 1 }, function()
+		Effects.sfx("click", 0.3)
+		panels.toggle("Rebirth")
+	end)
+	UI.button(bar, "COLLECT ALL", T.good, { Size = UDim2.fromOffset(170, 56), LayoutOrder = 2 }, function()
+		Effects.sfx("click", 0.3)
+		Net.get("CollectAll"):FireServer()
+	end)
+	widgets.btnLock = UI.button(bar, "LOCK BASE", T.bad, { Size = UDim2.fromOffset(170, 56), LayoutOrder = 3 }, function()
+		Effects.sfx("click", 0.3)
+		Net.get("UseLock"):FireServer()
+	end)
+
+	-- Hint line
+	widgets.hint = UI.label(root, "", { Size = UDim2.fromOffset(640, 30), AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -76), TextColor3 = T.gold })
+
+	-- Director button
+	local dirBtn = UI.button(root, "DIRECTOR", Color3.fromRGB(70, 70, 90), { Size = UDim2.fromOffset(100, 34), AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, -14), Visible = false }, function()
+		panels.toggle("Director")
+	end)
+	widgets.dirBtn = dirBtn
+
+	----------------------------------------------------------------
+	-- data bindings
+	----------------------------------------------------------------
+	ClientState.onChanged(function(d)
+		widgets.cash.Text = Util.money(d.cash)
+		widgets.cps.Text = "+" .. Util.money(d.cps) .. "/s"
+		widgets.mult.Text = "x" .. string.format("%.2f", d.mult):gsub("%.?0+$", "")
+		widgets.dirBtn.Visible = d.isDirector
+		widgets.btn_Spin.Visible = d.spinReady
+		local giftReady = false
+		for i, g in Config.GIFTS do
+			if d.playSeconds >= g.at and not d.giftsClaimed[i] then
+				giftReady = true
+				break
+			end
+		end
+		widgets.btn_Rewards.Visible = d.dailyReady or giftReady
+		if d.cash >= d.rebirthCost then
+			widgets.btnRebirth.Text = "REBIRTH READY!"
+			widgets.btnRebirth.BackgroundColor3 = Color3.fromRGB(230, 110, 255)
+		else
+			widgets.btnRebirth.Text = "REBIRTH"
+			widgets.btnRebirth.BackgroundColor3 = Color3.fromRGB(150, 80, 215)
+		end
+	end)
+
+	-- per-frame timers
+	RunService.Heartbeat:Connect(function()
+		local d = ClientState.data
+		if not d then
+			return
+		end
+		local now = ClientState.now()
+		-- tide
+		local s, endsAt = ClientState.tide.state, ClientState.tide.endsAt
+		local left = math.max(0, endsAt - now)
+		local txt, col
+		if s == "Idle" then
+			txt, col = "NEXT TIDE  " .. Util.formatTime(left), T.cyan
+		elseif s == "Warning" then
+			txt, col = "TIDE INCOMING! HIGH GROUND!  " .. math.ceil(left), T.bad
+		elseif s == "Wave" then
+			txt, col = "THE TIDE IS HERE!! STAY HIGH!", T.bad
+		else
+			txt, col = "TIDE SURGE! 2x INCOME  " .. Util.formatTime(left), Color3.fromRGB(80, 255, 220)
+		end
+		widgets.tide.Text = txt
+		widgets.tide.TextColor3 = col
+		widgets.tideStroke.Color = col
+
+		-- luck
+		local luckLeft = d.luck.endsAt - now
+		widgets.luckFrame.Visible = d.luck.mult > 1 and luckLeft > 0
+		if widgets.luckFrame.Visible then
+			widgets.luck.Text = "SERVER LUCK x" .. d.luck.mult .. "  " .. Util.formatTime(luckLeft)
+		end
+		-- shields
+		widgets.shieldFrame.Visible = d.shields > 0
+		widgets.shield.Text = "TIDE SHIELDS: " .. d.shields
+		-- lock
+		local lockActive = d.lockUntil - now
+		local lockWait = d.lockReadyAt - now
+		if lockActive > 0 then
+			widgets.lockFrame.Visible = true
+			widgets.lockLabel.Text = "BASE LOCKED  " .. Util.formatTime(lockActive)
+			widgets.btnLock.Text = "LOCKED"
+		elseif lockWait > 0 then
+			widgets.lockFrame.Visible = false
+			widgets.btnLock.Text = "LASERS " .. Util.formatTime(lockWait)
+		else
+			widgets.lockFrame.Visible = false
+			widgets.btnLock.Text = "LOCK BASE"
+		end
+		-- hint
+		local hint = ""
+		local tut = d.tutorial
+		if s == "Warning" or s == "Wave" then
+			hint = "Get to your base platform - the water is DEADLY below the platforms!"
+		elseif not tut.bought then
+			hint = "Walk to the GOOBER BELT in the middle and HOLD E on a goober to buy it!"
+		elseif not tut.collected then
+			hint = "Stand on your glowing pad to collect the cash your goober earns!"
+		elseif not tut.stole then
+			hint = "Climb another base and HOLD E on a goober to STEAL it. Run it home!"
+		elseif d.carrying then
+			hint = "Run to YOUR base platform to keep the stolen goober!"
+		end
+		widgets.hint.Text = hint
+	end)
+end
+
+-- Called by Panels so the red dots follow reality.
+function Hud.widget(name: string)
+	return widgets[name]
+end
+
+return Hud
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="32">
+          <Properties>
+            <string name="Name">Main</string>
+            <string name="Source"><![CDATA[-- GOOBER TIDE - client bootstrap.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Net = require(Shared.Net)
+local UI = require(script.Parent.UI)
+local ClientState = require(script.Parent.ClientState)
+local Effects = require(script.Parent.Effects)
+local Hud = require(script.Parent.Hud)
+local Panels = require(script.Parent.Panels)
+local World = require(script.Parent.World)
+
+-- Wait for the server to publish the remotes
+Net.get("Data")
+
+local gui = UI.make("ScreenGui", {
+	Name = "GooberTideUI",
+	ResetOnSpawn = false,
+	IgnoreGuiInset = true,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	DisplayOrder = 10,
+	Parent = playerGui,
+})
+
+-- responsive scaling (phones get a smaller UI)
+local scale = UI.make("UIScale", { Parent = gui })
+local function updateScale()
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local h = cam.ViewportSize.Y
+	scale.Scale = math.clamp(h / 800, 0.55, 1.15)
+end
+updateScale()
+if workspace.CurrentCamera then
+	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
+end
+
+-- loading cover
+local cover = UI.make("Frame", { Name = "Cover", BackgroundColor3 = UI.Theme.bg, Size = UDim2.fromScale(1, 1), ZIndex = 100, Parent = gui })
+UI.label(cover, "GOOBER TIDE", { Size = UDim2.fromOffset(520, 90), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.42), TextColor3 = UI.Theme.pink, ZIndex = 101 })
+UI.label(cover, "Catching goobers...", { Size = UDim2.fromOffset(320, 36), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.55), TextColor3 = UI.Theme.dim, ZIndex = 101 })
+
+Effects.Init(gui)
+Panels.Init(gui)
+Hud.Init(gui, Panels)
+World.Init()
+
+Net.get("Data").OnClientEvent:Connect(function(snapshot)
+	ClientState.set(snapshot)
+	if cover.Visible then
+		UI.tween(cover, 0.6, { BackgroundTransparency = 1 })
+		task.delay(0.6, function()
+			cover.Visible = false
+		end)
+		for _, c in cover:GetDescendants() do
+			if c:IsA("TextLabel") then
+				UI.tween(c, 0.4, { TextTransparency = 1 })
+			end
+		end
+	end
+end)
+
+Net.get("TideState").OnClientEvent:Connect(function(state, endsAt)
+	ClientState.tide.state = state
+	ClientState.tide.endsAt = endsAt
+	if state == "Warning" then
+		Effects.vignette(Color3.fromRGB(255, 40, 40), 15, 8)
+	elseif state == "Wave" then
+		Effects.flash(Color3.fromRGB(120, 200, 255), 0.35)
+	elseif state == "Surge" then
+		Effects.flash(Color3.fromRGB(180, 255, 240), 0.5)
+	end
+end)
+
+-- Director / creator convenience: F6 hides the HUD for clean footage
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.F6 then
+		local root = Hud.widget("root")
+		if root then
+			root.Visible = not root.Visible
+		end
+	end
+end)
+
+-- keep the Roblox default backpack but hide player list clutter on small screens
+pcall(function()
+	game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+end)
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="33">
+          <Properties>
+            <string name="Name">Panels</string>
+            <string name="Source"><![CDATA[-- All modal panels: Shop, Index (with odds disclosure), Rewards, Free Spin, Rebirth, Codes, Director.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared.Config)
+local Util = require(Shared.Util)
+local Net = require(Shared.Net)
+local Factory = require(Shared.GooberFactory)
+local UI = require(script.Parent.UI)
+local ClientState = require(script.Parent.ClientState)
+local Effects = require(script.Parent.Effects)
+
+local Panels = {}
+local T = UI.Theme
+local player = Players.LocalPlayer
+
+local gui: ScreenGui
+local panels: { [string]: any } = {}
+local current: string? = nil
+
+----------------------------------------------------------------------
+-- Panel frame helper
+----------------------------------------------------------------------
+local function newPanel(name: string, title: string, size: Vector2, accent: Color3?)
+	local f = UI.make("Frame", {
+		Name = name,
+		Visible = false,
+		BackgroundColor3 = T.bg,
+		Size = UDim2.fromOffset(size.X, size.Y),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		ZIndex = 20,
+		Parent = gui,
+	})
+	UI.corner(f, 20)
+	UI.stroke(f, accent or T.pink, 4)
+	local scale = UI.make("UIScale", { Scale = 1, Parent = f })
+	UI.label(f, title, { Size = UDim2.new(1, -120, 0, 44), Position = UDim2.fromOffset(18, 8), TextColor3 = accent or T.pink, TextXAlignment = Enum.TextXAlignment.Left })
+	UI.button(f, "X", T.bad, { Size = UDim2.fromOffset(44, 40), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 10) }, function()
+		Panels.close()
+	end)
+	local content = UI.make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -28, 1, -68), Position = UDim2.fromOffset(14, 58), Parent = f })
+	local p = { frame = f, content = content, scale = scale, onOpen = nil :: (() -> ())? }
+	panels[name] = p
+	return p
+end
+
+function Panels.close()
+	if current then
+		local p = panels[current]
+		current = nil
+		UI.tween(p.scale, 0.15, { Scale = 0.85 })
+		task.delay(0.15, function()
+			if current ~= nil and panels[current] == p then
+				return
+			end
+			p.frame.Visible = false
+		end)
+	end
+end
+
+function Panels.open(name: string)
+	local p = panels[name]
+	if not p then
+		return
+	end
+	if current and current ~= name then
+		panels[current].frame.Visible = false
+	end
+	current = name
+	p.scale.Scale = 0.85
+	p.frame.Visible = true
+	UI.tween(p.scale, 0.2, { Scale = 1 }, Enum.EasingStyle.Back)
+	if p.onOpen then
+		p.onOpen()
+	end
+end
+
+function Panels.toggle(name: string)
+	if current == name then
+		Panels.close()
+	else
+		Panels.open(name)
+	end
+end
+
+local function scrolling(parent: Instance, layout: Instance?): ScrollingFrame
+	local sf = UI.make("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 8,
+		BorderSizePixel = 0,
+		Parent = parent,
+	})
+	return sf
+end
+
+----------------------------------------------------------------------
+-- SHOP
+----------------------------------------------------------------------
+local function buildShop()
+	local p = newPanel("Shop", "SHOP", Vector2.new(640, 520), T.pink)
+	local sf = scrolling(p.content)
+	UI.make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sf })
+	UI.make("UIPadding", { PaddingRight = UDim.new(0, 10), Parent = sf })
+
+	local rows: { [string]: { button: TextButton, kind: string } } = {}
+
+	local function header(text: string, order: number)
+		UI.label(sf, text, { Size = UDim2.new(1, 0, 0, 30), TextColor3 = T.gold, LayoutOrder = order, TextXAlignment = Enum.TextXAlignment.Left })
+	end
+
+	local function row(kind: string, key: string, entry: any, order: number)
+		local f = UI.make("Frame", { BackgroundColor3 = T.panel, Size = UDim2.new(1, 0, 0, 66), LayoutOrder = order, Parent = sf })
+		UI.corner(f, 12)
+		UI.label(f, entry.name, { Size = UDim2.new(0.62, 0, 0, 28), Position = UDim2.fromOffset(12, 6), TextXAlignment = Enum.TextXAlignment.Left })
+		UI.label(f, entry.desc, { Size = UDim2.new(0.62, 0, 0, 22), Position = UDim2.fromOffset(12, 36), TextColor3 = T.dim, TextXAlignment = Enum.TextXAlignment.Left, Stroke = false })
+		local b = UI.button(f, "R$ " .. entry.robux, T.good, { Size = UDim2.fromOffset(120, 44), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0) }, function()
+			if entry.id == 0 then
+				Effects.toast("Not live yet - add the Roblox id in Config (see docs).", "error")
+				return
+			end
+			if kind == "pass" then
+				MarketplaceService:PromptGamePassPurchase(player, entry.id)
+			else
+				MarketplaceService:PromptProductPurchase(player, entry.id)
+			end
+		end)
+		rows[key] = { button = b, kind = kind }
+	end
+
+	header("GAME PASSES", 0)
+	local order = 1
+	local passList = {}
+	for k, v in Config.PASSES do
+		table.insert(passList, { k, v })
+	end
+	table.sort(passList, function(a, b)
+		return a[2].order < b[2].order
+	end)
+	for _, e in passList do
+		row("pass", e[1], e[2], order)
+		order += 1
+	end
+	header("BOOSTS & PACKS", 100)
+	local prodList = {}
+	for k, v in Config.PRODUCTS do
+		table.insert(prodList, { k, v })
+	end
+	table.sort(prodList, function(a, b)
+		return a[2].order < b[2].order
+	end)
+	order = 101
+	for _, e in prodList do
+		row("product", "P_" .. e[1], e[2], order)
+		order += 1
+	end
+
+	ClientState.onChanged(function(d)
+		for key, r in rows do
+			if r.kind == "pass" then
+				local owned = d.passes[key]
+				r.button.Text = if owned then "OWNED" else "R$ " .. Config.PASSES[key].robux
+				r.button.BackgroundColor3 = if owned then T.panel2 else T.good
+				r.button.Active = not owned
+			end
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- INDEX
+----------------------------------------------------------------------
+local function rarityChance(def: any): number
+	local total = 0
+	for _, r in Config.Rarities do
+		total += r.weight
+	end
+	local countInRarity = 0
+	for _, d in Config.Creatures do
+		if d.rarity == def.rarity and not d.tideOnly then
+			countInRarity += 1
+		end
+	end
+	if def.tideOnly or countInRarity == 0 then
+		return 0
+	end
+	return Config.Rarity[def.rarity].weight / total * 100 / countInRarity
+end
+
+local function makePreview(parent: Instance, def: any, discovered: boolean)
+	local vp = UI.make("ViewportFrame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 84), Parent = parent })
+	local cam = Instance.new("Camera")
+	cam.FieldOfView = 35
+	vp.CurrentCamera = cam
+	cam.Parent = vp
+	local model = Factory.build(def, "Normal")
+	if not discovered then
+		for _, d in model:GetDescendants() do
+			if d:IsA("BasePart") then
+				d.Color = Color3.fromRGB(12, 12, 20)
+				d.Material = Enum.Material.SmoothPlastic
+				d.Transparency = 0
+			end
+		end
+	end
+	model.Parent = vp
+	local cf, size = model:GetBoundingBox()
+	local dist = math.max(size.X, size.Y) * 1.9
+	cam.CFrame = CFrame.lookAt(cf.Position + Vector3.new(size.X * 0.12, size.Y * 0.12, -dist), cf.Position)
+end
+
+local function buildIndex()
+	local p = newPanel("Index", "GOOBERDEX", Vector2.new(700, 540), Color3.fromRGB(140, 130, 255))
+	local progress = UI.label(p.content, "", { Size = UDim2.new(1, 0, 0, 26), TextColor3 = T.gold, TextXAlignment = Enum.TextXAlignment.Left })
+	local sf = scrolling(p.content)
+	sf.Position = UDim2.fromOffset(0, 32)
+	sf.Size = UDim2.new(1, 0, 1, -84)
+	local mutLines = {}
+	for _, row in Config.MutationRoll do
+		table.insert(mutLines, string.format("%s x%s (%s%%)", row[1], tostring(Config.Mutations[row[1]].mult), tostring(row[2])))
+	end
+	UI.label(p.content, "MUTATIONS ON THE BELT:  " .. table.concat(mutLines, "  |  ") .. "  |  Tidal x6 (Tide Surge only)", {
+		Size = UDim2.new(1, 0, 0, 44),
+		Position = UDim2.new(0, 0, 1, -44),
+		TextColor3 = T.dim,
+		TextWrapped = true,
+		Stroke = false,
+	})
+	local grid = UI.make("UIGridLayout", { CellSize = UDim2.fromOffset(120, 168), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sf })
+
+	local lastKey: string? = nil
+	local function rebuild(d: any)
+		local key = ""
+		for id in d.discovered do
+			key ..= id .. ","
+		end
+		if key == lastKey then
+			return
+		end
+		lastKey = key
+		for _, c in sf:GetChildren() do
+			if c:IsA("Frame") or c:IsA("TextLabel") then
+				c:Destroy()
+			end
+		end
+		local count = 0
+		for i, def in Config.Creatures do
+			local known = d.discovered[def.id] == true
+			if known then
+				count += 1
+			end
+			local rar = Config.Rarity[def.rarity]
+			local card = UI.make("Frame", { BackgroundColor3 = T.panel, LayoutOrder = i, Parent = sf })
+			UI.corner(card, 12)
+			UI.stroke(card, if known then rar.color else T.panel2, 3)
+			makePreview(card, def, known)
+			UI.label(card, if known then def.name else "???", { Size = UDim2.new(1, -8, 0, 24), Position = UDim2.fromOffset(4, 86) })
+			UI.label(card, string.upper(def.rarity), { Size = UDim2.new(1, -8, 0, 18), Position = UDim2.fromOffset(4, 112), TextColor3 = rar.color })
+			local chance = rarityChance(def)
+			UI.label(card, if def.tideOnly then "Tide only!" else string.format("%.2f%%", chance), { Size = UDim2.new(1, -8, 0, 16), Position = UDim2.fromOffset(4, 132), TextColor3 = T.dim, Stroke = false })
+			if known then
+				UI.label(card, "$" .. Util.formatNumber(def.cps) .. "/s", { Size = UDim2.new(1, -8, 0, 14), Position = UDim2.fromOffset(4, 149), TextColor3 = T.gold, Stroke = false })
+			end
+		end
+		progress.Text = "Discovered " .. count .. " / " .. #Config.Creatures .. "   -   chances shown are per belt roll"
+	end
+	p.onOpen = function()
+		if ClientState.data then
+			rebuild(ClientState.data)
+		end
+	end
+	ClientState.onChanged(function(d)
+		if current == "Index" then
+			rebuild(d)
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- REWARDS (daily streak + playtime gifts)
+----------------------------------------------------------------------
+local function buildRewards()
+	local p = newPanel("Rewards", "REWARDS", Vector2.new(720, 520), T.good)
+	UI.label(p.content, "DAILY STREAK", { Size = UDim2.new(1, 0, 0, 26), TextColor3 = T.gold, TextXAlignment = Enum.TextXAlignment.Left })
+	local days = UI.make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 130), Position = UDim2.fromOffset(0, 32), Parent = p.content })
+	UI.make("UIGridLayout", { CellSize = UDim2.fromOffset(94, 124), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = days })
+	local tiles = {}
+	for i, r in Config.DAILY do
+		local f = UI.make("Frame", { BackgroundColor3 = T.panel, LayoutOrder = i, Parent = days })
+		UI.corner(f, 10)
+		local st = UI.stroke(f, T.panel2, 3)
+		UI.label(f, "DAY " .. i, { Size = UDim2.new(1, 0, 0, 22), Position = UDim2.fromOffset(0, 4), TextColor3 = T.dim })
+		UI.label(f, r.label, { Size = UDim2.new(1, -8, 0, 62), Position = UDim2.fromOffset(4, 28), TextWrapped = true, TextScaled = true })
+		local state = UI.label(f, "", { Size = UDim2.new(1, 0, 0, 22), Position = UDim2.fromOffset(0, 96) })
+		tiles[i] = { frame = f, stroke = st, state = state }
+	end
+	local claim = UI.button(p.content, "CLAIM TODAY'S REWARD", T.good, { Size = UDim2.fromOffset(300, 44), Position = UDim2.fromOffset(0, 170) }, function()
+		Net.get("ClaimDaily"):FireServer()
+	end)
+
+	UI.label(p.content, "PLAYTIME GIFTS", { Size = UDim2.new(1, 0, 0, 26), Position = UDim2.fromOffset(0, 226), TextColor3 = T.gold, TextXAlignment = Enum.TextXAlignment.Left })
+	local gifts = UI.make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 220), Position = UDim2.fromOffset(0, 256), Parent = p.content })
+	UI.make("UIGridLayout", { CellSize = UDim2.fromOffset(104, 100), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = gifts })
+	local giftTiles = {}
+	for i, g in Config.GIFTS do
+		local b = UI.make("TextButton", { BackgroundColor3 = T.panel, Text = "", LayoutOrder = i, AutoButtonColor = false, Parent = gifts })
+		UI.corner(b, 10)
+		local st = UI.stroke(b, T.panel2, 3)
+		local what = if g.kind == "cash" then "CASH" elseif g.kind == "luck" then "LUCK" elseif g.kind == "shield" then "SHIELD" else "GOOBER"
+		UI.label(b, what, { Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 8) })
+		local t = UI.label(b, "", { Size = UDim2.new(1, -8, 0, 30), Position = UDim2.fromOffset(4, 56), TextColor3 = T.dim })
+		b.Activated:Connect(function()
+			Net.get("ClaimGift"):FireServer(i)
+		end)
+		giftTiles[i] = { frame = b, stroke = st, label = t }
+	end
+
+	local function refresh()
+		local d = ClientState.data
+		if not d then
+			return
+		end
+		local nextDay = (d.dailyStreak % #Config.DAILY) + 1
+		local doneUpTo = if d.dailyReady then nextDay - 1 else ((d.dailyStreak - 1) % #Config.DAILY) + 1
+		for i, t in tiles do
+			if i <= doneUpTo then
+				t.state.Text = "DONE"
+				t.state.TextColor3 = T.good
+				t.stroke.Color = T.good
+			elseif i == nextDay and d.dailyReady then
+				t.state.Text = "TODAY!"
+				t.state.TextColor3 = T.gold
+				t.stroke.Color = T.gold
+			else
+				t.state.Text = "..."
+				t.state.TextColor3 = T.dim
+				t.stroke.Color = T.panel2
+			end
+		end
+		claim.Visible = d.dailyReady
+		for i, g in Config.GIFTS do
+			local t = giftTiles[i]
+			if d.giftsClaimed[i] then
+				t.label.Text = "CLAIMED"
+				t.label.TextColor3 = T.dim
+				t.stroke.Color = T.panel2
+			elseif d.playSeconds >= g.at then
+				t.label.Text = "CLAIM!"
+				t.label.TextColor3 = T.good
+				t.stroke.Color = T.good
+			else
+				t.label.Text = Util.formatTime(g.at - d.playSeconds)
+				t.label.TextColor3 = T.dim
+				t.stroke.Color = T.panel2
+			end
+		end
+	end
+	p.onOpen = refresh
+	ClientState.onChanged(function()
+		if current == "Rewards" then
+			refresh()
+		end
+	end)
+	-- local clock for the gift countdowns
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			local d = ClientState.data
+			if d then
+				d.playSeconds += 1
+				if current == "Rewards" then
+					refresh()
+				end
+			end
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- FREE SPIN
+----------------------------------------------------------------------
+local function buildSpin()
+	local p = newPanel("Spin", "LUCKY SPIN", Vector2.new(640, 440), T.gold)
+	local board = UI.make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 220), Position = UDim2.fromOffset(0, 6), Parent = p.content })
+	UI.make("UIGridLayout", { CellSize = UDim2.fromOffset(142, 100), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = board })
+	local tiles = {}
+	for i, r in Config.SPIN do
+		local f = UI.make("Frame", { BackgroundColor3 = T.panel, LayoutOrder = i, Parent = board })
+		UI.corner(f, 12)
+		local st = UI.stroke(f, T.panel2, 3)
+		UI.label(f, r.label, { Size = UDim2.new(1, -10, 1, -10), Position = UDim2.fromOffset(5, 5), TextWrapped = true })
+		tiles[i] = { frame = f, stroke = st }
+	end
+	local result = UI.label(p.content, "", { Size = UDim2.new(1, 0, 0, 36), Position = UDim2.fromOffset(0, 236), TextColor3 = T.good })
+	local spinning = false
+	local btn = UI.button(p.content, "SPIN!", T.gold, { Size = UDim2.fromOffset(260, 56), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 286) }, function()
+		if spinning then
+			return
+		end
+		Net.get("DoSpin"):FireServer()
+	end)
+
+	local function highlight(i: number?)
+		for k, t in tiles do
+			t.stroke.Color = if k == i then T.gold else T.panel2
+			t.frame.BackgroundColor3 = if k == i then Color3.fromRGB(90, 80, 40) else T.panel
+		end
+	end
+
+	Net.get("SpinResult").OnClientEvent:Connect(function(index: number, desc: string)
+		spinning = true
+		result.Text = ""
+		task.spawn(function()
+			local seq = 24 + index
+			for step = 1, seq do
+				highlight(((step - 1) % #Config.SPIN) + 1)
+				Effects.sfx("click", 0.25)
+				task.wait(0.04 + (step / seq) ^ 3 * 0.26)
+			end
+			result.Text = "YOU WON: " .. tostring(desc)
+			Effects.flash(T.gold, 0.35)
+			Effects.sfx("reveal", 0.6)
+			spinning = false
+		end)
+	end)
+
+	local function refresh()
+		local d = ClientState.data
+		if not d or spinning then
+			return
+		end
+		if d.spinReady then
+			btn.Text = "SPIN!"
+			btn.BackgroundColor3 = T.gold
+		else
+			btn.Text = "NEXT SPIN " .. Util.formatTime(d.spinIn)
+			btn.BackgroundColor3 = T.panel2
+		end
+	end
+	p.onOpen = refresh
+	ClientState.onChanged(refresh)
+end
+
+----------------------------------------------------------------------
+-- REBIRTH
+----------------------------------------------------------------------
+local function buildRebirth()
+	local p = newPanel("Rebirth", "REBIRTH", Vector2.new(560, 440), Color3.fromRGB(190, 90, 255))
+	local info = UI.label(p.content, "", { Size = UDim2.new(1, 0, 0, 40), TextColor3 = T.text })
+	local mult = UI.label(p.content, "", { Size = UDim2.new(1, 0, 0, 52), Position = UDim2.fromOffset(0, 48), TextColor3 = T.gold })
+	local barBg = UI.make("Frame", { BackgroundColor3 = T.panel, Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 112), Parent = p.content })
+	UI.corner(barBg, 15)
+	local fill = UI.make("Frame", { BackgroundColor3 = Color3.fromRGB(190, 90, 255), Size = UDim2.fromScale(0, 1), Parent = barBg })
+	UI.corner(fill, 15)
+	local barText = UI.label(barBg, "", { Size = UDim2.fromScale(1, 1) })
+	UI.label(p.content, "You LOSE: cash + all goobers below Mythic.\nYou KEEP: Mythic & Secret goobers, passes, index, codes.\nYou GAIN: +50% permanent income & +1 slot per rebirth.", {
+		Size = UDim2.new(1, 0, 0, 100),
+		Position = UDim2.fromOffset(0, 158),
+		TextColor3 = T.dim,
+		TextWrapped = true,
+		TextScaled = false,
+		TextSize = 18,
+	})
+	local go = UI.button(p.content, "REBIRTH NOW", Color3.fromRGB(190, 90, 255), { Size = UDim2.fromOffset(300, 56), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 280) }, function()
+		Net.get("Rebirth"):FireServer()
+	end)
+	ClientState.onChanged(function(d)
+		info.Text = "Rebirth " .. d.rebirths .. "  ->  " .. (d.rebirths + 1) .. "   |   Cost " .. Util.money(d.rebirthCost)
+		mult.Text = "Income x" .. d.rebirthMult .. "  ->  x" .. d.rebirthMultNext
+		local ratio = math.clamp(d.cash / d.rebirthCost, 0, 1)
+		fill.Size = UDim2.fromScale(ratio, 1)
+		barText.Text = Util.money(d.cash) .. " / " .. Util.money(d.rebirthCost)
+		go.Active = d.cash >= d.rebirthCost
+		go.BackgroundColor3 = if go.Active then Color3.fromRGB(190, 90, 255) else T.panel2
+	end)
+end
+
+----------------------------------------------------------------------
+-- CODES
+----------------------------------------------------------------------
+local function buildCodes()
+	local p = newPanel("Codes", "CODES", Vector2.new(520, 300), T.cyan)
+	UI.label(p.content, "Follow us for new codes every update!", { Size = UDim2.new(1, 0, 0, 32), TextColor3 = T.dim })
+	local box = UI.make("TextBox", {
+		BackgroundColor3 = T.panel,
+		Size = UDim2.new(1, 0, 0, 52),
+		Position = UDim2.fromOffset(0, 50),
+		Text = "",
+		PlaceholderText = "Enter code...",
+		Font = UI.FONT,
+		TextSize = 26,
+		TextColor3 = T.text,
+		ClearTextOnFocus = false,
+		Parent = p.content,
+	})
+	UI.corner(box, 12)
+	UI.stroke(box, T.cyan, 3)
+	UI.button(p.content, "REDEEM", T.cyan, { Size = UDim2.fromOffset(240, 52), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 124) }, function()
+		Net.get("Redeem"):FireServer(box.Text)
+		box.Text = ""
+	end)
+end
+
+----------------------------------------------------------------------
+-- DIRECTOR (content capture tools)
+----------------------------------------------------------------------
+local function buildDirector()
+	local p = newPanel("Director", "DIRECTOR MODE", Vector2.new(560, 470), Color3.fromRGB(150, 150, 190))
+	UI.label(p.content, "Tools for recording marketing footage. F6 hides the HUD.", { Size = UDim2.new(1, 0, 0, 26), TextColor3 = T.dim })
+	local grid = UI.make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, -34), Position = UDim2.fromOffset(0, 34), Parent = p.content })
+	UI.make("UIGridLayout", { CellSize = UDim2.fromOffset(170, 46), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+	local function cmd(label: string, c: string, arg: any?, color: Color3?)
+		UI.button(grid, label, color or T.panel2, nil, function()
+			Net.get("Director"):FireServer(c, arg)
+		end)
+	end
+	cmd("TRIGGER TIDE", "tide", nil, T.bad)
+	cmd("BEACH GOOBERS", "beach", nil, T.cyan)
+	cmd("SPAWN LEGENDARY", "spawn", "Legendary", T.gold)
+	cmd("SPAWN MYTHIC", "spawn", "Mythic", T.pink)
+	cmd("SPAWN SECRET", "spawn", "Secret", Color3.fromRGB(20, 200, 190))
+	cmd("RAINBOW MYTHIC", "spawn", "Mythic:Rainbow", Color3.fromRGB(190, 90, 255))
+	cmd("LAVA EPIC", "spawn", "Epic:Lava", Color3.fromRGB(255, 120, 40))
+	cmd("GOLD LEGENDARY", "spawn", "Legendary:Gold", Color3.fromRGB(230, 180, 40))
+	cmd("+$1 BILLION", "cash", 1e9)
+	cmd("+$1 TRILLION", "cash", 1e12)
+	cmd("SERVER LUCK x4", "luck")
+	cmd("+3 SHIELDS", "shield")
+	cmd("UNLOCK ALL SLOTS", "slots")
+	cmd("REFILL BASE LOCK", "lockrefill")
+	cmd("GIVE: THE GOOBER", "giveSlot", "thegoober:Rainbow", Color3.fromRGB(80, 200, 255))
+	cmd("GIVE: TSUNAMOO", "giveSlot", "tsunamoo:Tidal", Color3.fromRGB(40, 120, 255))
+end
+
+function Panels.Init(screenGui: ScreenGui)
+	gui = screenGui
+	buildShop()
+	buildIndex()
+	buildRewards()
+	buildSpin()
+	buildRebirth()
+	buildCodes()
+	buildDirector()
+	return Panels
+end
+
+return Panels
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="34">
+          <Properties>
+            <string name="Name">UI</string>
+            <string name="Source"><![CDATA[-- Tiny UI toolkit: everything in Goober Tide's interface is built from code.
+
+local TweenService = game:GetService("TweenService")
+
+local UI = {}
+
+UI.Theme = {
+	bg = Color3.fromRGB(22, 25, 48),
+	panel = Color3.fromRGB(34, 38, 70),
+	panel2 = Color3.fromRGB(48, 53, 94),
+	pink = Color3.fromRGB(255, 90, 160),
+	cyan = Color3.fromRGB(70, 220, 255),
+	good = Color3.fromRGB(80, 230, 130),
+	bad = Color3.fromRGB(255, 85, 100),
+	gold = Color3.fromRGB(255, 205, 70),
+	text = Color3.fromRGB(255, 255, 255),
+	dim = Color3.fromRGB(170, 176, 210),
+}
+
+UI.FONT = Enum.Font.FredokaOne
+
+function UI.make(class: string, props: { [string]: any }?, children: { Instance }?): any
+	local inst = Instance.new(class)
+	local parent
+	for k, v in props or {} do
+		if k == "Parent" then
+			parent = v
+		else
+			(inst :: any)[k] = v
+		end
+	end
+	for _, c in children or {} do
+		c.Parent = inst
+	end
+	if parent then
+		inst.Parent = parent
+	end
+	return inst
+end
+
+function UI.corner(inst: Instance, radius: number?): UICorner
+	return UI.make("UICorner", { CornerRadius = UDim.new(0, radius or 12), Parent = inst })
+end
+
+function UI.stroke(inst: Instance, color: Color3?, thickness: number?): UIStroke
+	return UI.make("UIStroke", { Color = color or Color3.new(0, 0, 0), Thickness = thickness or 2, Parent = inst })
+end
+
+function UI.label(parent: Instance, text: string, props: { [string]: any }?): TextLabel
+	local p: { [string]: any } = {
+		BackgroundTransparency = 1,
+		Text = text,
+		Font = UI.FONT,
+		TextColor3 = UI.Theme.text,
+		TextScaled = true,
+		Size = UDim2.fromScale(1, 1),
+		Parent = parent,
+	}
+	local stroke = true
+	for k, v in props or {} do
+		if k == "Stroke" then
+			stroke = v
+		else
+			p[k] = v
+		end
+	end
+	local l = UI.make("TextLabel", p)
+	if stroke then
+		UI.make("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.2, Parent = l })
+	end
+	return l
+end
+
+function UI.button(parent: Instance, text: string, color: Color3, props: { [string]: any }?, onClick: (() -> ())?): TextButton
+	local p: { [string]: any } = {
+		BackgroundColor3 = color,
+		Text = text,
+		Font = UI.FONT,
+		TextColor3 = UI.Theme.text,
+		TextScaled = true,
+		AutoButtonColor = true,
+		Size = UDim2.fromOffset(120, 44),
+		Parent = parent,
+	}
+	for k, v in props or {} do
+		p[k] = v
+	end
+	local b = UI.make("TextButton", p)
+	UI.corner(b, 12)
+	UI.stroke(b, Color3.new(0, 0, 0), 2)
+	UI.make("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingTop = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5), Parent = b })
+	if onClick then
+		b.Activated:Connect(onClick)
+	end
+	return b
+end
+
+function UI.tween(inst: Instance, seconds: number, goal: { [string]: any }, style: Enum.EasingStyle?, dir: Enum.EasingDirection?): Tween
+	local t = TweenService:Create(inst, TweenInfo.new(seconds, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), goal)
+	t:Play()
+	return t
+end
+
+function UI.dot(parent: Instance): Frame
+	local d = UI.make("Frame", {
+		Name = "Dot",
+		BackgroundColor3 = UI.Theme.bad,
+		Size = UDim2.fromOffset(18, 18),
+		Position = UDim2.new(1, -6, 0, -6),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Visible = false,
+		ZIndex = 5,
+		Parent = parent,
+	})
+	UI.corner(d, 9)
+	UI.stroke(d, Color3.new(1, 1, 1), 2)
+	return d
+end
+
+return UI
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="35">
+          <Properties>
+            <string name="Name">World</string>
+            <string name="Source"><![CDATA[-- World-space client polish: idle bobbing, rainbow mutations, and per-viewer prompt hiding.
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+
+local World = {}
+local player = Players.LocalPlayer
+
+local goobers: { [Model]: number } = {}
+local rainbows: { [Model]: boolean } = {}
+
+local function track(model: Instance)
+	if model:IsA("Model") then
+		goobers[model] = math.random() * 6.28
+	end
+end
+
+local function trackRainbow(model: Instance)
+	if model:IsA("Model") then
+		rainbows[model] = true
+	end
+end
+
+function World.Init()
+	for _, m in CollectionService:GetTagged("PlotGoober") do
+		track(m)
+	end
+	CollectionService:GetInstanceAddedSignal("PlotGoober"):Connect(track)
+	CollectionService:GetInstanceRemovedSignal("PlotGoober"):Connect(function(m)
+		goobers[m :: Model] = nil
+	end)
+	for _, m in CollectionService:GetTagged("RainbowGoober") do
+		trackRainbow(m)
+	end
+	CollectionService:GetInstanceAddedSignal("RainbowGoober"):Connect(trackRainbow)
+	CollectionService:GetInstanceRemovedSignal("RainbowGoober"):Connect(function(m)
+		rainbows[m :: Model] = nil
+	end)
+
+	local frame = 0
+	RunService.RenderStepped:Connect(function()
+		frame += 1
+		local cam = workspace.CurrentCamera
+		if not cam then
+			return
+		end
+		local camPos = cam.CFrame.Position
+		local t = os.clock()
+
+		if frame % 2 == 0 then
+			for model, phase in goobers do
+				local body = model.PrimaryPart
+				if body and body.Parent then
+					local base = body:GetAttribute("Base")
+					if base and (body.Position - camPos).Magnitude < 90 then
+						body.CFrame = (base :: CFrame) * CFrame.new(0, math.sin(t * 2.2 + phase) * 0.35, 0) * CFrame.Angles(0, math.sin(t * 1.1 + phase) * 0.18, 0)
+					end
+				end
+			end
+		end
+
+		if frame % 3 == 0 then
+			local hue = (t * 0.25) % 1
+			for model in rainbows do
+				local body = model.PrimaryPart
+				if body and body.Parent and (body.Position - camPos).Magnitude < 140 then
+					body.Color = Color3.fromHSV((hue + body.Position.Z * 0.01) % 1, 0.75, 1)
+				end
+			end
+		end
+	end)
+
+	-- Prompts that are not meant for this player are hidden locally:
+	--   HideFromOwner = userId  -> steal prompts on your own goobers
+	--   OwnerOnly     = userId  -> lock console / slot unlock prompts of other bases
+	ProximityPromptService.PromptShown:Connect(function(prompt)
+		local hide = prompt:GetAttribute("HideFromOwner")
+		local ownerOnly = prompt:GetAttribute("OwnerOnly")
+		if hide ~= nil and hide == player.UserId then
+			prompt.Enabled = false
+		elseif ownerOnly ~= nil and ownerOnly ~= player.UserId then
+			prompt.Enabled = false
+		end
+	end)
+end
+
+return World
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="36">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="NeedsPivotMigration">false</bool>
+      <bool name="StreamingEnabled">false</bool>
+    </Properties>
+  </Item>
+</roblox>
