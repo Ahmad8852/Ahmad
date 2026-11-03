@@ -1,0 +1,9 @@
+{
+  "name": "plainsearch",
+  "version": "1.0.0",
+  "description": "Unranked metasearch + retro page rewriter in a 2010 style. Zero dependencies.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "demo": "PLAINSEARCH_DEMO=1 node server.js", "test": "node --test test/run.js" },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}
