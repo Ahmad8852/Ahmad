@@ -36,6 +36,12 @@ Or just double-click **build-mac.command** in Finder. The app is unsigned, so th
 | **Wikipedia** | Cleaned article view. |
 | **Reddit / X** | Redirected to `old.reddit.com` / a Nitter host (best effort – they may block servers). |
 
+### Clean by default
+* **Web searches independent indexes only** (Mojeek, Marginalia, Mwmbl, YaCy, Wiby + Wikipedia) – tick *Also Bing & DuckDuckGo* to widen. All engines are queried with adult-content filtering **off**.
+* **No videos**: video results and video sites (YouTube, Vimeo, TikTok, Twitch, Rumble…) are hidden everywhere except the Video tab; a note shows how many were hidden, one click shows them. *Everything* is text sources only.
+* **Plain numbered text results.** Pictures in results and the picture strip are tick-boxes, off by default.
+* Classic cream-paper theme.
+
 ### How results are ordered (the "unbiased" part)
 plainsearch adds **no relevance score, popularity boost or personalisation**. You pick the merge:
 interleaved (default) · grouped by source · newest · oldest · shuffled with a repeatable seed.

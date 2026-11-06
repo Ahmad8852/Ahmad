@@ -27,7 +27,7 @@ const json = (res, status, obj) => send(res, status, JSON.stringify(obj, null, 1
 
 function params(sp) {
   const p = {};
-  for (const k of ['q', 'cat', 'sort', 'time', 'limit', 'per', 'page', 'site', 'hide', 'must', 'seed', 'dedupe', 'open']) p[k] = sp.get(k) || '';
+  for (const k of ['q', 'cat', 'sort', 'time', 'limit', 'per', 'page', 'site', 'hide', 'must', 'seed', 'dedupe', 'open', 'scope', 'video', 'pics', 'strip']) p[k] = sp.get(k) || '';
   p.sourcesList = sp.getAll('sources').flatMap((s) => s.split(',')).filter(Boolean);
   p.sources = p.sourcesList;
   return p;

@@ -152,3 +152,26 @@ test('source check endpoint reports failures honestly', async () => {
   const demo = await S.checkSource('demo-a');
   assert.equal(demo.ok, true); assert.equal(demo.count, 10);
 });
+
+test('videos are hidden outside the Video tab; independent indexes are the Web default', () => {
+  const S = require('../lib/search');
+  const items = [
+    { title: 'Article', url: 'https://a.example/x', snippet: '' },
+    { title: 'A video', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', snippet: '' },
+    { title: 'short link', url: 'https://youtu.be/abc', snippet: '' },
+    { title: 'typed video', url: 'https://x.example/v', type: 'video', snippet: '' },
+    { title: 'Vimeo', url: 'https://vimeo.com/123', snippet: '' },
+    { title: 'Notvimeo', url: 'https://notvimeo.com/1', snippet: '' },
+  ];
+  const run = (o) => S.applyFilters(items, S.parseQuery('x'), { site: '', hide: '', must: '', time: '', cat: 'web', video: false, ...o }).map((r) => r.title);
+  assert.deepEqual(run({}), ['Article', 'Notvimeo']);
+  assert.equal(run({ video: true }).length, 6, 'video=1 shows everything');
+  assert.equal(run({ cat: 'video' }).length, 6, 'the Video tab always shows videos');
+  const web = S.defaultSources('web', 'indep').map((p) => p.id);
+  assert.ok(['mojeek', 'marginalia', 'mwmbl', 'yacy', 'wiby'].every((id) => web.includes(id)));
+  assert.ok(!web.includes('bing') && !web.includes('ddg'), 'commercial engines are opt-in');
+  const both = S.defaultSources('web', 'all').map((p) => p.id);
+  assert.ok(both.includes('bing') && both.includes('ddg'));
+  const everything = R.forCategory('all');
+  assert.ok(everything.length > 40 && !everything.some((p) => ['youtube', 'dailymotion', 'sepiasearch', 'nasa-images', 'commons'].includes(p.id)), 'Everything is text sources only');
+});
