@@ -4,10 +4,26 @@ An **unranked metasearch engine**, **tabbed retro browser** and **page rewriter*
 Zero dependencies – only Node 20+.
 
 ```bash
-npm start            # http://127.0.0.1:8080
-npm test             # 12 tests (parsers, filters, sanitizer, SSRF guard, end-to-end)
+npm start            # http://127.0.0.1:8080  (browser version, no install step)
+npm test             # 12 tests (parsers, filters, sanitizer, SSRF guard, deep results, streaming, end-to-end)
 npm run demo         # adds offline fixture sources, for trying the UI with no internet
 ```
+
+## Mac app (Electron)
+Runs the same server inside its own window: tabs, bookmarks, address bar, Cmd+T / Cmd+L / Cmd+[ / Cmd+], links to other sites open in your normal browser.
+
+```bash
+npm install          # once (downloads Electron, a few hundred MB)
+npm run app          # run it as an app right now
+npm run dist         # build dist/plainsearch-*.dmg  → drag to Applications
+```
+Or just double-click **build-mac.command** in Finder. The app is unsigned, so the first time: right-click it → **Open** → **Open**
+(if macOS says it's "damaged": `xattr -cr /Applications/plainsearch.app`).
+
+## Speed and depth
+* Results **stream in** as each source answers – the page appears instantly and the first results show within about a second; slow sources no longer hold up fast ones. Identical searches are cached for 10 minutes (paging is instant).
+* Each source is fetched **page after page in parallel** until it runs dry or reaches its limit. *Max results* goes up to 2,000 (default 1,000 in the UI, 100 in the API). Real depth depends on the sources: Wikipedia/Archive/arXiv/Crossref/Hacker News give hundreds to 1,000, while DuckDuckGo, Mojeek, GitHub and Stack Overflow are capped lower to avoid being blocked. The **Everything** tab asks all 18 sources at once.
+
 
 ## What it does
 
@@ -27,7 +43,7 @@ Every query shows **every source asked**, with result counts, timings and errors
 
 ### API (no keys, CORS on, no logs)
 `/api/search` `/api/images` `/api/videos` `/api/sources` `/api/suggest` `/api/page` `/api/youtube` + `/opensearch.xml`
-(`format=json|rss|txt`). Full docs at `/api`.
+(`format=json|rss|txt`; `limit` up to 2000, `per`/`page` to slice). `/api/stream` is the same search as newline-delimited JSON. Full docs at `/api`.
 
 ### Sources
 Mojeek ★, Marginalia ★ (own indexes) · DuckDuckGo · Wikipedia · Wikimedia Commons · Openverse · Internet Archive · YouTube · Hacker News · Reddit · Stack Overflow · GitHub · arXiv · Crossref · Open Library · Project Gutenberg · optional **SearXNG** (`SEARXNG_URL=http://localhost:8888`) which fans out to 70+ engines.

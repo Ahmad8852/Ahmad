@@ -1,9 +1,51 @@
 {
   "name": "plainsearch",
   "version": "1.0.0",
-  "description": "Unranked metasearch + retro page rewriter in a 2010 style. Zero dependencies.",
-  "main": "server.js",
-  "scripts": { "start": "node server.js", "demo": "PLAINSEARCH_DEMO=1 node server.js", "test": "node --test test/run.js" },
-  "engines": { "node": ">=20" },
-  "license": "MIT"
+  "description": "Unranked metasearch + retro page rewriter in a 2010 style. Zero runtime dependencies; optional Electron desktop app.",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "node server.js",
+    "demo": "PLAINSEARCH_DEMO=1 node server.js",
+    "test": "node --test test/run.js",
+    "app": "electron .",
+    "dist": "electron-builder --mac dmg zip",
+    "pack": "electron-builder --mac --dir"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "author": "plainsearch",
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "local.plainsearch.app",
+    "productName": "plainsearch",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "server.js",
+      "lib/**",
+      "public/**",
+      "electron/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png",
+      "identity": null,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "title": "plainsearch"
+    }
+  }
 }

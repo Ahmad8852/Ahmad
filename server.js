@@ -27,7 +27,7 @@ const json = (res, status, obj) => send(res, status, JSON.stringify(obj, null, 1
 
 function params(sp) {
   const p = {};
-  for (const k of ['q', 'cat', 'sort', 'time', 'n', 'page', 'site', 'hide', 'must', 'seed', 'dedupe', 'open']) p[k] = sp.get(k) || '';
+  for (const k of ['q', 'cat', 'sort', 'time', 'limit', 'per', 'page', 'site', 'hide', 'must', 'seed', 'dedupe', 'open']) p[k] = sp.get(k) || '';
   p.sourcesList = sp.getAll('sources').flatMap((s) => s.split(',')).filter(Boolean);
   p.sources = p.sourcesList;
   return p;
@@ -63,8 +63,31 @@ async function handle(req, res) {
     const q = sp.get('q') || '';
     if (!q.trim()) return send(res, 200, V.home({ embed }));
     const pr = params(sp);
-    const out = await S.search(pr);
-    return send(res, 200, V.results(out, { ...pr, n: sp.get('n') }, embed));
+    const o = S.normalizeOpts(pr, 1000);
+    pr.page = parseInt(pr.page, 10) || 1;
+    // Finished (or cached) search, or the caller asked to wait, or it's page 2+: render everything on the server.
+    if (S.isCached(pr, 1000) || sp.get('wait') === '1' || pr.page > 1) {
+      const out = await S.search(pr, { defLimit: 1000 });
+      return send(res, 200, V.results({ out, o, p: pr, embed, S }));
+    }
+    // Otherwise send the page at once and let /api/stream fill it in as each source answers.
+    return send(res, 200, V.results({ out: null, o, p: pr, embed, S }));
+  }
+
+  if (p === '/api/stream') {
+    const pr = params(sp);
+    if (!pr.q.trim()) return json(res, 400, { error: 'missing q' });
+    const o = S.normalizeOpts(pr, 1000);
+    pr.page = parseInt(pr.page, 10) || 1;
+    res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', 'x-content-type-options': 'nosniff' });
+    let closed = false;
+    res.on('close', () => { closed = true; });
+    const frag = (out) => JSON.stringify({ e: out.done ? 'done' : 'progress', total: out.total, count: V.countHtml(out, o, pr, embed), list: V.listHtml(out, o, pr, embed, S), status: V.statusHtml(out) }) + '\n';
+    try {
+      const out = await S.search(pr, { defLimit: 1000, onProgress: (x) => { if (!closed && !x.done) res.write(frag(x)); } });
+      if (!closed) res.write(frag({ ...out, done: true }));
+    } catch (e) { if (!closed) res.write(JSON.stringify({ e: 'error', message: String(e.message) }) + '\n'); }
+    return res.end();
   }
 
   if (p === '/api/search' || p === '/api/images' || p === '/api/videos') {
@@ -72,7 +95,9 @@ async function handle(req, res) {
     if (p === '/api/images') pr.cat = 'images';
     if (p === '/api/videos') pr.cat = 'video';
     if (!pr.q.trim()) return json(res, 400, { error: 'missing q' });
-    const out = await S.search(pr);
+    const full = await S.search(pr, { defLimit: 100 });
+    let out = full;
+    if (pr.per) { const sl = S.pageSlice(full, pr.page, Math.max(1, Math.min(500, parseInt(pr.per, 10) || 50))); out = { ...full, page: sl.page, pages: sl.pages, per: sl.per, results: sl.items }; }
     const fmt = sp.get('format');
     if (fmt === 'rss') return send(res, 200, S.toRss(out, base + req.url), 'application/rss+xml; charset=utf-8', { 'access-control-allow-origin': '*' });
     if (fmt === 'txt') return send(res, 200, S.toText(out), 'text/plain; charset=utf-8', { 'access-control-allow-origin': '*' });

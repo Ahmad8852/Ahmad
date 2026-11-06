@@ -155,7 +155,7 @@ test('end-to-end: server, retro proxy, image proxy, forms, API', async (t) => {
   ({ r } = await get('/static/../server.js')); assert.equal(r.status, 404);
 
   // search (demo sources) + formats
-  ({ text } = await get('/api/search?q=hello&cat=web&sort=grouped'));
+  ({ text } = await get('/api/search?q=hello&cat=web&sort=interleave'));
   let j = JSON.parse(text);
   assert.ok(j.sources.length >= 6);
   assert.ok(j.results.some((x) => x.source === 'demo-a') && j.results.some((x) => x.source === 'demo-b'));
@@ -164,9 +164,37 @@ test('end-to-end: server, retro proxy, image proxy, forms, API', async (t) => {
   j = JSON.parse(text);
   assert.deepEqual(j.results.slice(0, 4).map((x) => x.source), ['demo-a', 'demo-b', 'demo-a', 'demo-b']);
   ({ text } = await get('/api/search?q=hello&sources=demo-a&site=example.com&hide=nothing.org'));
-  assert.equal(JSON.parse(text).results.length, 6);
+  assert.equal(JSON.parse(text).results.length, 100); // default API limit
   ({ text } = await get('/api/search?q=hello&sources=demo-a&format=rss')); assert.match(text, /<rss/);
   ({ text } = await get('/api/search?q=hello&sources=demo-a&format=txt')); assert.match(text, /1\. Demo A result 1/);
+
+  // deep results: >1000 across sources, sliced by per/page
+  ({ text } = await get('/api/search?q=deep&sources=demo-a,demo-b,demo-c&limit=2000'));
+  j = JSON.parse(text);
+  assert.equal(j.total, 820); assert.equal(j.results.length, 820);
+  assert.equal(new Set(j.results.map((x) => x.url)).size, 820, 'no duplicates');
+  ({ text } = await get('/api/search?q=deep&sources=demo-a,demo-b,demo-c&limit=2000&per=100&page=3'));
+  j = JSON.parse(text);
+  assert.equal(j.results.length, 100); assert.equal(j.page, 3); assert.equal(j.pages, 9);
+  ({ text } = await get('/api/search?q=deep&sources=demo-a&limit=10')); assert.equal(JSON.parse(text).results.length, 10);
+
+  // streaming endpoint: first progress arrives before the slow source finishes
+  const t0 = Date.now();
+  const sr = await fetch(base + '/api/stream?q=streamtest&sources=demo-a,demo-c&limit=1000');
+  const lines = []; let firstAt = 0;
+  const reader = sr.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  for (;;) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const parts = buf.split('\n'); buf = parts.pop(); for (const l of parts) if (l) { lines.push(JSON.parse(l)); if (!firstAt) firstAt = Date.now() - t0; } }
+  assert.ok(firstAt < 1500, 'first results should not wait for the slow source (was ' + firstAt + 'ms)');
+  assert.equal(lines.at(-1).e, 'done'); assert.equal(lines.at(-1).total, 560);
+  assert.ok(lines.some((l) => l.e === 'progress'));
+  assert.ok(lines.at(-1).list.includes('Demo A result 1 for'));
+  // the finished search is now cached → /search renders server-side, instantly, with numbered pages
+  const t1 = Date.now();
+  ({ r, text } = await get('/search?q=streamtest&sources=demo-a,demo-c&limit=1000&page=2'));
+  assert.ok(Date.now() - t1 < 500 && text.includes('Results 51–100 of 560') && text.includes('class="pg on">2<'));
+  // uncached page 1 → shell with data-stream
+  ({ text } = await get('/search?q=neverseen&sources=demo-a&limit=100'));
+  assert.ok(text.includes('data-stream="/api/stream?q=neverseen'));
   ({ r } = await get('/api/search')); assert.equal(r.status, 400);
   assert.equal(r.headers.get('access-control-allow-origin'), '*');
   ({ text } = await get('/api/sources')); assert.ok(JSON.parse(text).sources.length >= 18);
