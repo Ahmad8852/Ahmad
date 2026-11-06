@@ -158,3 +158,8 @@ body.browserapp{height:100vh;overflow:hidden;background:#dfe6ef}
 #statusbar{background:linear-gradient(#e9eef5,#d3dce8);border-top:1px solid #8fa2bd;padding:2px 10px;font-size:11px;color:#445}
 
 @media (max-width:760px){#cols{flex-direction:column}#side{width:100%;min-height:0}.sbox input[type=text]{width:60vw}.yt-player{height:56vw}}
+
+#srcs{max-height:240px;overflow:auto;background:#fff;border:1px solid #d3dce8;border-radius:2px;padding:3px 6px}
+.selall{font-weight:normal;text-transform:none;letter-spacing:0;float:right;font-size:11px}
+#ctab td.st.ok{color:#2a8a2a;font-weight:bold}#ctab td.st.bad{color:#a33;font-weight:bold}#ctab td.st.run{color:#888}
+#ctab td.sm{color:#555;font-size:12px}

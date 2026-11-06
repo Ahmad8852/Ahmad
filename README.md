@@ -5,7 +5,7 @@ Zero dependencies – only Node 20+.
 
 ```bash
 npm start            # http://127.0.0.1:8080  (browser version, no install step)
-npm test             # 12 tests (parsers, filters, sanitizer, SSRF guard, deep results, streaming, end-to-end)
+npm test             # 18 tests (parsers for every source, filters, sanitizer, SSRF guard, deep results, streaming, custom sources, end-to-end)
 npm run demo         # adds offline fixture sources, for trying the UI with no internet
 ```
 
@@ -45,9 +45,27 @@ Every query shows **every source asked**, with result counts, timings and errors
 `/api/search` `/api/images` `/api/videos` `/api/sources` `/api/suggest` `/api/page` `/api/youtube` + `/opensearch.xml`
 (`format=json|rss|txt`; `limit` up to 2000, `per`/`page` to slice). `/api/stream` is the same search as newline-delimited JSON. Full docs at `/api`.
 
-### Sources
-Mojeek ★, Marginalia ★ (own indexes) · DuckDuckGo · Wikipedia · Wikimedia Commons · Openverse · Internet Archive · YouTube · Hacker News · Reddit · Stack Overflow · GitHub · arXiv · Crossref · Open Library · Project Gutenberg · optional **SearXNG** (`SEARXNG_URL=http://localhost:8888`) which fans out to 70+ engines.
-Add one in ~10 lines in `lib/providers.js` (`def(id, name, categories, description, async (q, opts) => [...])`).
+### Sources (106, all keyless)
+| Tab | Sources |
+|---|---|
+| **Web** | Mojeek ★, Marginalia ★, Mwmbl ★, YaCy ★ (peer-to-peer), Wiby ★ · DuckDuckGo, Bing · Wikipedia · optional **SearXNG** (`SEARXNG_URL`) |
+| **Images** | Wikimedia Commons, Openverse, Internet Archive, NASA, Art Institute of Chicago, Cleveland Museum of Art, iNaturalist |
+| **Video** | YouTube, SepiaSearch (PeerTube), Dailymotion, Internet Archive, NASA |
+| **Audio** | Openverse, Internet Archive, Podcasts, Music (Apple directory), MusicBrainz |
+| **News** | GDELT (65 languages), Bing News, Wikinews |
+| **Discussions** | Hacker News, Reddit, Reddit archive (PullPush), Lemmy, Stack Overflow + 14 other Stack Exchange sites |
+| **Code** | GitHub, GitLab, Codeberg, npm, crates.io, Docker Hub, Maven, RubyGems, Packagist, NuGet, Hex, pub.dev, Hugging Face, MDN |
+| **Papers** | arXiv, Crossref, OpenAlex, Semantic Scholar, Europe PMC, DOAJ, DBLP, INSPIRE, Zenodo, HAL |
+| **Books** | Open Library, Project Gutenberg, Google Books, Apple Books, Wikibooks, Wikisource, Internet Archive |
+| **Archive** | Internet Archive, Library of Congress |
+| **Reference** | Wiktionary, Wikiquote, Wikivoyage, Wikispecies, Wikidata, 14 other-language Wikipedias, Urban Dictionary, OpenStreetMap places, GBIF species, iNaturalist, MusicBrainz, MDN |
+| **Data** | Data.gov, Federal Register, SEC EDGAR full-text, Wikidata, Zenodo, Hugging Face datasets |
+
+**Everything** queries ~75 of them at once (not the Stack Exchange extras or foreign-language Wikipedias, to keep the noise and API quotas down). At most 40 requests are in flight at a time (`PLAINSEARCH_CONCURRENCY`).
+
+**Test them:** open **/sources/check** – it sends one harmless query to every source from your computer and shows which work, how fast, and what they returned. Sources that fail (blocked, rate-limited, changed format) are reported in every search and simply skipped.
+
+**Add your own, no code:** copy `sources.example.json` to `sources.json` – any JSON search API (`{q}` `{page}` `{n}` `{offset}` in the URL, dotted paths for the fields) or RSS/Atom feed. Or write a 10-line adapter in `lib/sources_more.js`.
 
 ## Honest limits
 * **There is no such thing as an index-free search engine** that also covers the web. This asks many independent indexes/APIs and lets *you* control merging and filtering. Each source still ranks its own results.
@@ -62,4 +80,4 @@ Add one in ~10 lines in `lib/providers.js` (`def(id, name, categories, descripti
 * Images are proxied with no referrer/cookies and must really be `image/*`.
 * No cookies, accounts or logs. Bookmarks/tabs live in your browser's `localStorage`.
 
-Env: `PORT` `HOST` `SEARXNG_URL` `GITHUB_TOKEN` (higher GitHub limits). Behind a proxy use `NODE_USE_ENV_PROXY=1`.
+Env: `PORT` `HOST` `SEARXNG_URL` `GITHUB_TOKEN` (higher GitHub limits) `STACKEXCHANGE_KEY` (higher Stack Exchange quota) `PLAINSEARCH_SOURCES` (path to a sources.json) `PLAINSEARCH_CONCURRENCY`. Behind a proxy use `NODE_USE_ENV_PROXY=1`.

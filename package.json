@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "demo": "PLAINSEARCH_DEMO=1 node server.js",
-    "test": "node --test test/run.js",
+    "test": "node --test test/run.js test/sources.test.js",
     "app": "electron .",
     "dist": "electron-builder --mac dmg zip",
     "pack": "electron-builder --mac --dir"

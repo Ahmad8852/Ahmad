@@ -53,6 +53,8 @@ async function handle(req, res) {
   if (p === '/') return send(res, 200, V.home({ embed }));
   if (p === '/api') return send(res, 200, V.apiDocs(base));
   if (p === '/sources') return send(res, 200, V.sourcesPage());
+  if (p === '/sources/check') return send(res, 200, V.sourceCheck());
+  if (p === '/api/sources/check') return json(res, 200, await S.checkSource(sp.get('id') || '', sp.get('q') || 'linux'));
   if (p === '/about') return send(res, 200, V.about());
   if (p === '/browser') return send(res, 200, V.browserShell());
   if (p === '/opensearch.xml') {

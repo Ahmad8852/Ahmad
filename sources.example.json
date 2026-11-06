@@ -1,0 +1,22 @@
+[
+  {
+    "id": "my-wiki",
+    "name": "My MediaWiki",
+    "cats": ["reference"],
+    "desc": "Any JSON search API: use {q} {page} {n} {offset} in the URL.",
+    "url": "https://example.org/w/api.php?action=query&list=search&srsearch={q}&srlimit={n}&sroffset={offset}&format=json",
+    "format": "json",
+    "list": "query.search",
+    "map": { "title": "title", "url": "pageid", "snippet": "snippet", "date": "timestamp" },
+    "per": 50,
+    "maxDepth": 200
+  },
+  {
+    "id": "my-feed",
+    "name": "My RSS search",
+    "cats": ["news"],
+    "url": "https://example.org/search.rss?q={q}",
+    "format": "rss",
+    "per": 50
+  }
+]

@@ -22,6 +22,14 @@
     }).catch(function () {});
   }
 
+  // ---- source list: all / none ----
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('[data-sel]');
+    if (!a) return;
+    e.preventDefault();
+    [].forEach.call(document.querySelectorAll('#srcs input[type=checkbox]'), function (c) { c.checked = a.getAttribute('data-sel') === '1'; });
+  });
+
   // ---- lightbox (event delegation: the grid is re-rendered while results stream in) ----
   var lb = $('lb'), cur = 0;
   function items() { return [].slice.call(document.querySelectorAll('#grid .gi')); }
